@@ -1,0 +1,6 @@
+{
+  "name": "PROLOG",
+  "description": "Sistema corporativo e executivo de gestão de demandas, projetos, melhorias e tarefas com Kanban, visualizações 5W2H, Dashboard Executivo, exportação para Excel/PNG e ecossistema Google Workspace.",
+  "requestFramePermissions": ["notifications", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,11 @@
+node_modules/
+data/auth-credentials.json
+data/user-accounts.json
+data/invitations.json
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
