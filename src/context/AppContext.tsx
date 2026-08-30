@@ -49,6 +49,8 @@ import { StorageService } from '../services/storage';
 import { apiClient, ApiError } from '../services/apiClient';
 import { ALL_RBAC_PERMISSIONS, INITIAL_ROLE_PERMISSIONS, INITIAL_CATEGORIES, INITIAL_STATUSES, INITIAL_PRIORITIES } from '../data/initialData';
 import confetti from 'canvas-confetti';
+import { DomainProviders } from './domainContexts';
+import { userCan } from './permissionPolicy';
 
 export interface ToastMessage {
   id: string;
@@ -58,7 +60,7 @@ export interface ToastMessage {
   duration?: number;
 }
 
-interface AppContextType {
+export interface AppContextType {
   // Master Entities
   users: User[];
   teams: Team[];
@@ -1803,47 +1805,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     action: RbacAction,
     activityType?: 'PROJETO' | 'MELHORIA' | 'TAREFA' | 'GERAL'
   ): boolean => {
-    if (!user) return false;
-
-    // Check specific module:action key (or activity type module)
-    const targetModule = activityType && ['PROJETO', 'MELHORIA', 'TAREFA'].includes(activityType)
-      ? (activityType === 'PROJETO' ? 'projects' : activityType === 'MELHORIA' ? 'improvements' : 'tasks')
-      : module;
-
-    const permissionKey = `${targetModule}:${action}`;
-
-    // Admin has all permissions unless explicitly revoked in custom overrides
-    if (user.role === 'admin') {
-      if (user.customPermissions?.revoked?.includes(permissionKey)) {
-        return false;
-      }
-      return true;
-    }
-
-    // 1. Check custom overrides for the specific user
-    if (user.customPermissions) {
-      if (user.customPermissions.revoked?.includes(permissionKey)) {
-        return false;
-      }
-      if (user.customPermissions.granted?.includes(permissionKey)) {
-        return true;
-      }
-    }
-
-    // 2. Check role permissions
-    const permissionsForRole = rolePermissions[user.role] || [];
-    if (permissionsForRole.includes(permissionKey)) {
-      return true;
-    }
-
-    // 3. Fallback check: if checking project/improvement/task, also check general demands permission
-    if (['projects', 'improvements', 'tasks'].includes(targetModule)) {
-      if (permissionsForRole.includes(`demands:${action}`)) {
-        return true;
-      }
-    }
-
-    return false;
+    return userCan(user, rolePermissions, module, action, activityType);
   };
 
   const hasPermission = (
@@ -1859,9 +1821,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     window.location.reload();
   };
 
-  return (
-    <AppContext.Provider
-      value={{
+  const value: AppContextType = {
         users,
         teams,
         categories,
@@ -1991,10 +1951,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         commandPaletteOpen,
         setCommandPaletteOpen,
         resetAllData
-      }}
-    >
-      {dataLoading ? <div className="min-h-dvh grid place-items-center bg-slate-50 text-sm font-bold text-slate-500">Carregando dados corporativos...</div> : dataError ? <div className="min-h-dvh grid place-items-center bg-slate-50 p-6"><div className="max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center"><h1 className="font-black text-red-700">Falha ao carregar o PROLOG</h1><p className="mt-2 text-sm text-slate-600">{dataError}</p><button onClick={()=>window.location.reload()} className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">Tentar novamente</button></div></div> : children}
-    </AppContext.Provider>
+  };
+
+  return (
+    <DomainProviders value={value}>
+      <AppContext.Provider value={value}>
+        {dataLoading ? <div className="min-h-dvh grid place-items-center bg-slate-50 text-sm font-bold text-slate-500">Carregando dados corporativos...</div> : dataError ? <div className="min-h-dvh grid place-items-center bg-slate-50 p-6"><div className="max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center"><h1 className="font-black text-red-700">Falha ao carregar o PROLOG</h1><p className="mt-2 text-sm text-slate-600">{dataError}</p><button onClick={()=>window.location.reload()} className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">Tentar novamente</button></div></div> : children}
+      </AppContext.Provider>
+    </DomainProviders>
   );
 };
 

@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { Check, KeyRound, Laptop, LoaderCircle, Moon, ShieldCheck, Sun, X } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import { useSession, useToastActions, useVisualState } from '../../context/domainContexts';
 import { csrfHeaders } from '../../services/csrf';
 import { UserAvatar } from '../common/UserAvatar';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 
 export const ProfileSettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const reduceMotion = useReducedMotion();
-  const { currentUser, theme, setTheme, showToast } = useApp();
+  const { currentUser } = useSession();
+  const { theme, setTheme } = useVisualState();
+  const { showToast } = useToastActions();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
