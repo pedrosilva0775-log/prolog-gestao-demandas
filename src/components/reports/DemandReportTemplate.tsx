@@ -6,6 +6,8 @@
 import React from 'react';
 import { Demand, User, Team, CategoryConfig, PriorityConfig, StatusConfig } from '../../types';
 import { Crown, BookOpen, Cog, Calendar, Check, Hourglass, ClipboardList } from 'lucide-react';
+import { formatCalendarDate, parseLocalCalendarDate } from '../../utils/date';
+import { createDefaultReportConfiguration, EVOLUTION_SERIES, ReportConfiguration, REPORT_KPIS, statusMatches } from './reportBuilder';
 
 interface DemandReportTemplateProps {
   id?: string;
@@ -15,11 +17,11 @@ interface DemandReportTemplateProps {
   categories: CategoryConfig[];
   priorities: PriorityConfig[];
   statuses: StatusConfig[];
-  issuerName?: string;
-  issuerRole?: string;
+  clientFilterText?: string;
   periodText?: string;
   generatedDateText?: string;
   isPrintMode?: boolean;
+  configuration?: ReportConfiguration;
 }
 
 export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
@@ -30,17 +32,18 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
   categories,
   priorities,
   statuses,
-  issuerName = 'Carlos Almeida',
-  issuerRole = 'Diretor',
+  clientFilterText = 'Todos os clientes',
   periodText = '01 a 31 de agosto de 2026',
   generatedDateText = new Date().toLocaleDateString('pt-BR'),
-  isPrintMode = false
+  isPrintMode = false,
+  configuration
 }) => {
   const userMap = new Map<string, User>(users.map((u) => [u.id, u]));
   const teamMap = new Map<string, Team>(teams.map((t) => [t.id, t]));
   const catMap = new Map<string, CategoryConfig>(categories.map((c) => [c.id, c]));
   const prioMap = new Map<string, PriorityConfig>(priorities.map((p) => [p.id, p]));
   const statusMap = new Map<string, StatusConfig>(statuses.map((s) => [s.id, s]));
+  const reportConfiguration = configuration || createDefaultReportConfiguration(statuses, categories);
 
   const now = new Date();
 
@@ -61,9 +64,20 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
 
   const completedPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   const pendingPercentage = totalCount > 0 ? 100 - completedPercentage : 0;
+  const ongoingCount=demands.filter(item=>statusMatches(statusMap.get(item.statusId),'andamento')).length;
+  const validationCount=demands.filter(item=>statusMatches(statusMap.get(item.statusId),'validação')).length;
+  const cancelledCount=demands.filter(item=>statusMap.get(item.statusId)?.category==='cancelled'||statusMatches(statusMap.get(item.statusId),'cancelada')).length;
+  const blockedCount=demands.filter(item=>item.blocker?.isBlocked||reportConfiguration.impedimentStatusIds.includes(item.statusId)).length;
+  const leadTime=completedDemands.length?Math.round(completedDemands.reduce((sum,item)=>sum+Math.max(0,(new Date(item.completedAt||item.dueDate).getTime()-new Date(item.createdAt).getTime())/86400000),0)/completedDemands.length):0;
+  const onTimeCount=completedDemands.filter(item=>new Date(item.completedAt||item.dueDate).getTime()<=parseLocalCalendarDate(item.dueDate,true).getTime()).length;
+  const onTimeRate=completedCount?Math.round(onTimeCount/completedCount*100):0;
+  const kpiValues:Record<string,string|number>={total:totalCount,open:pendingCount,completed:completedCount,ongoing:ongoingCount,blocked:blockedCount,completionRate:`${completedPercentage}%`,validation:validationCount,cancelled:cancelledCount,leadTime:`${leadTime} dias`,onTime:`${onTimeRate}%`};
+  const executiveSummary=`O portfólio possui ${totalCount} demandas no período analisado. Destas, ${ongoingCount} encontram-se em andamento, representando ${totalCount?Math.round(ongoingCount/totalCount*100):0}% do total, enquanto ${validationCount} estão em validação. Foram concluídas ${completedCount} demandas e existem ${blockedCount} demandas impedidas.`;
+  const evolutionData=Array.from({length:reportConfiguration.evolutionMonths},(_,index)=>{const date=new Date(now.getFullYear(),now.getMonth()-(reportConfiguration.evolutionMonths-1-index),1);const end=new Date(date.getFullYear(),date.getMonth()+1,1);const created=demands.filter(item=>{const value=new Date(item.createdAt);return value>=date&&value<end;});const completed=demands.filter(item=>{if(!item.completedAt)return false;const value=new Date(item.completedAt);return value>=date&&value<end;});return {label:date.toLocaleDateString('pt-BR',{month:'short'}),created:created.length,completed:completed.length,ongoing:created.filter(item=>statusMatches(statusMap.get(item.statusId),'andamento')).length,validation:created.filter(item=>statusMatches(statusMap.get(item.statusId),'validação')).length,blocked:created.filter(item=>item.blocker?.isBlocked||reportConfiguration.impedimentStatusIds.includes(item.statusId)).length,cancelled:created.filter(item=>statusMap.get(item.statusId)?.category==='cancelled').length};});
+  const seriesColors:Record<string,string>={created:'bg-blue-500',completed:'bg-emerald-500',ongoing:'bg-amber-500',validation:'bg-violet-500',blocked:'bg-red-500',cancelled:'bg-slate-500'};
 
   const getDeadlineInfo = (dueDateStr: string) => {
-    const due = new Date(dueDateStr);
+    const due = parseLocalCalendarDate(dueDateStr, true);
     const diffTime = due.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
@@ -159,7 +173,7 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
       const dateStr = new Date(demand.completedAt).toLocaleDateString('pt-BR');
       return `Concluída em ${dateStr}`;
     }
-    const dueDateStr = new Date(demand.dueDate).toLocaleDateString('pt-BR');
+    const dueDateStr = formatCalendarDate(demand.dueDate);
     return `Concluída em ${dueDateStr}`;
   };
 
@@ -170,7 +184,7 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
   return (
     <div
       id={id}
-      className={`w-full max-w-[1280px] mx-auto bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-lg font-sans text-slate-800 dark:text-slate-100 ${
+      className={`w-full min-w-0 max-w-[1280px] mx-auto bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-lg font-sans text-slate-800 dark:text-slate-100 ${
         isPrintMode ? 'p-2 shadow-none border-none bg-white text-slate-900' : ''
       }`}
       style={{ boxSizing: 'border-box' }}
@@ -182,11 +196,10 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
             RELATÓRIO DE DEMANDAS
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-1">
-            Demandas repassadas por:{' '}
+            Cliente solicitante:{' '}
             <span className="font-bold text-slate-800 dark:text-slate-200">
-              {issuerName}
-            </span>{' '}
-            — <span className="text-slate-500 dark:text-slate-400">{issuerRole}</span>
+              {clientFilterText}
+            </span>
           </p>
         </div>
 
@@ -197,7 +210,8 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
       </div>
 
       {/* 2. Top Summary KPI Cards Row (5 Cards - Compact Single Row) */}
-      <div className="grid grid-cols-5 gap-2.5 py-3">
+      {reportConfiguration.blocks.includes('indicators') && <div className="grid gap-2.5 py-3" style={{gridTemplateColumns:`repeat(${Math.min(Math.max(reportConfiguration.kpis.length,1),5)},minmax(0,1fr))`}}>{reportConfiguration.kpis.map(key=>{const definition=REPORT_KPIS.find(item=>item.key===key);return <div key={key} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-[9px] font-extrabold uppercase tracking-wide text-slate-500">{definition?.label}</p><p className="mt-1 text-xl font-black text-blue-700 dark:text-blue-300">{kpiValues[key]}</p></div>;})}</div>}
+      <div className="hidden grid-cols-5 gap-2.5 py-3">
         {/* Card 1: Total Demandas */}
         <div className="bg-slate-50/90 dark:bg-slate-800/60 rounded-xl p-2.5 border border-slate-200/80 dark:border-slate-700/60 flex items-center space-x-2.5">
           <div className="w-9 h-9 rounded-full bg-[#0B1E3F] text-white flex items-center justify-center shrink-0 shadow-xs">
@@ -313,12 +327,20 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
         </div>
       </div>
 
+      {reportConfiguration.blocks.includes('statusFlow') && <section className="my-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800"><h2 className="text-xs font-black uppercase text-slate-700 dark:text-slate-200">Status do Fluxo</h2><div className="mt-2 flex flex-wrap gap-2">{statuses.filter(item=>reportConfiguration.statusIds.includes(item.id)).map(item=><span key={item.id} className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">{item.name}: {demands.filter(demand=>demand.statusId===item.id).length}</span>)}</div></section>}
+      {reportConfiguration.blocks.includes('demandTypes') || reportConfiguration.blocks.includes('categoryDistribution') ? <section className="my-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800"><h2 className="text-xs font-black uppercase text-slate-700 dark:text-slate-200">Distribuição por categoria</h2><div className="mt-2 grid grid-cols-3 gap-2">{categories.filter(item=>reportConfiguration.categoryIds.includes(item.id)).map(item=>{const count=demands.filter(demand=>demand.categoryId===item.id).length;return <div key={item.id} className="rounded-lg bg-slate-50 p-2 dark:bg-slate-800"><strong className="text-xs">{item.name}</strong><p className="text-lg font-black text-blue-600">{count}</p><small className="text-slate-500">{totalCount?Math.round(count/totalCount*100):0}% do total</small></div>;})}</div></section>:null}
+      {reportConfiguration.blocks.includes('evolution') && <section className="my-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex items-center justify-between"><h2 className="text-xs font-black uppercase text-slate-700 dark:text-slate-200">Evolução - Últimos {reportConfiguration.evolutionMonths} meses</h2><div className="flex flex-wrap gap-2">{reportConfiguration.evolutionSeries.map(key=><span key={key} className="text-[9px] text-slate-500"><i className={`mr-1 inline-block h-2 w-2 rounded ${seriesColors[key]}`}/>{EVOLUTION_SERIES.find(item=>item.key===key)?.label}</span>)}</div></div><div className="mt-3 flex h-28 items-end gap-2">{evolutionData.map(item=><div key={item.label} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1"><div className="flex h-20 items-end gap-0.5">{reportConfiguration.evolutionSeries.map(key=><div key={key} title={`${EVOLUTION_SERIES.find(series=>series.key===key)?.label}: ${item[key]}`} className={`w-2.5 rounded-t ${seriesColors[key]}`} style={{height:`${Math.max(4,item[key]*8)}px`}}/>)}</div><span className="text-[9px] capitalize text-slate-500">{item.label}</span></div>)}</div></section>}
+      {reportConfiguration.blocks.includes('blocked') && <section className="my-3 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30"><h2 className="text-xs font-black uppercase text-amber-700 dark:text-amber-300">Demandas Impedidas</h2><p className="mt-1 text-sm font-bold">{blockedCount?`${blockedCount} demandas impedidas no período.`:'Nenhuma demanda impedida no período.'}</p></section>}
+      <div className="my-3 grid grid-cols-1 gap-3 md:grid-cols-3">{reportConfiguration.blocks.includes('ongoing')&&<section className="rounded-xl border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/30"><h2 className="text-xs font-black uppercase text-blue-700">Demandas em andamento</h2><p className="mt-1 text-lg font-black">{ongoingCount}</p><small>{totalCount?Math.round(ongoingCount/totalCount*100):0}% das demandas selecionadas estão em execução.</small></section>}{reportConfiguration.blocks.includes('validation')&&<section className="rounded-xl border border-violet-200 bg-violet-50 p-3 dark:border-violet-900 dark:bg-violet-950/30"><h2 className="text-xs font-black uppercase text-violet-700">Em validação</h2><p className="mt-1 text-lg font-black">{validationCount}</p><small>Demandas aguardando homologação ou aceite.</small></section>}{reportConfiguration.blocks.includes('portfolioHealth')&&<section className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30"><h2 className="text-xs font-black uppercase text-emerald-700">Saúde do portfólio</h2><p className="mt-1 text-lg font-black">{blockedCount===0?'Saudável':blockedCount<=2?'Atenção':'Crítica'}</p><small>{blockedCount} impedimento(s) ativo(s).</small></section>}</div>
+      {(reportConfiguration.blocks.includes('performance')||reportConfiguration.blocks.includes('attention'))&&<div className="my-3 grid grid-cols-1 gap-3 md:grid-cols-2">{reportConfiguration.blocks.includes('performance')&&<section className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><h2 className="text-xs font-black uppercase">Performance</h2><p className="mt-1 text-xs">Lead time médio: <strong>{leadTime} dias</strong> - Conclusão no prazo: <strong>{onTimeRate}%</strong></p></section>}{reportConfiguration.blocks.includes('attention')&&<section className="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/30"><h2 className="text-xs font-black uppercase text-red-700">Pontos de atenção</h2><p className="mt-1 text-xs"><strong>{blockedCount}</strong> impedida(s), <strong>{validationCount}</strong> em validação e <strong>{cancelledCount}</strong> cancelada(s).</p></section>}</div>}
+      {reportConfiguration.blocks.includes('executiveSummary')&&reportConfiguration.autoSummary&&<section className="my-3 rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30"><h2 className="text-xs font-black uppercase text-blue-700 dark:text-blue-300">Resumo Executivo</h2><p className="mt-2 text-xs leading-relaxed">{executiveSummary}</p>{reportConfiguration.includeRecommendation&&<p className="mt-2 text-xs font-bold">Recomendação: priorizar a conclusão das demandas em andamento e acompanhar impedimentos e validações para garantir fluxo contínuo.</p>}</section>}
+
       {/* 3. Main Tables: Side-by-Side PENDENTES & CONCLUÍDAS */}
-      <div className="grid grid-cols-2 gap-3.5 my-2">
+      <div className={`${reportConfiguration.blocks.some(key=>['ongoing','blocked','validation','performance','attention'].includes(key))?'grid':'hidden'} min-w-0 grid-cols-2 gap-3.5 my-2`}>
         {/* ========================================================================= */}
         {/* PANEL LEFT: PENDENTES */}
         {/* ========================================================================= */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden flex flex-col">
+        <div className="min-w-0 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden flex flex-col">
           {/* Section Header */}
           <div className="px-3 py-2 bg-amber-50/60 dark:bg-amber-950/20 border-b border-amber-200/60 dark:border-amber-900/40 flex items-center justify-between">
             <div className="flex items-center space-x-1.5">
@@ -438,7 +460,7 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
         {/* ========================================================================= */}
         {/* PANEL RIGHT: CONCLUÍDAS */}
         {/* ========================================================================= */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden flex flex-col">
+        <div className="min-w-0 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden flex flex-col">
           {/* Section Header */}
           <div className="px-3 py-2 bg-emerald-50/60 dark:bg-emerald-950/20 border-b border-emerald-200/60 dark:border-emerald-900/40 flex items-center justify-between">
             <div className="flex items-center space-x-1.5">
@@ -472,7 +494,7 @@ export const DemandReportTemplate: React.FC<DemandReportTemplateProps> = ({
                   const priority = getPriorityDisplay(demand.priorityId);
                   const cat = getCategoryIcon(demand.categoryId);
                   const deliveredResult = getDeliveredResult(demand);
-                  const dueDateFormatted = new Date(demand.dueDate).toLocaleDateString('pt-BR');
+                  const dueDateFormatted = formatCalendarDate(demand.dueDate);
 
                   return (
                     <tr

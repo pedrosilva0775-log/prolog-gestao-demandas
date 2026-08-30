@@ -8,18 +8,12 @@ import { useApp } from '../../context/AppContext';
 import {
   Search,
   Layers,
-  Smartphone,
-  Repeat,
-  Clock,
-  AlertTriangle,
-  Calendar,
-  Code2,
-  Activity,
   Plus,
   ArrowRight,
   Database
 } from 'lucide-react';
 import { ActiveView } from '../../types';
+import { isViewEnabled } from '../../config/views';
 
 interface CommandPaletteModalProps {
   isOpen: boolean;
@@ -31,8 +25,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({ isOpen
     demands,
     setActiveView,
     setSelectedDemand,
-    setIsNewDemandModalOpen,
-    createBackupPoint
+    setIsNewDemandModalOpen
   } = useApp();
 
   const [search, setSearch] = useState<string>('');
@@ -49,19 +42,9 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({ isOpen
     { id: 'dashboard', label: 'Dashboard & Indicadores', icon: Layers, category: 'Visões' },
     { id: 'kanban', label: 'Quadro Kanban', icon: Layers, category: 'Visões' },
     { id: 'list', label: 'Lista de Demandas', icon: Layers, category: 'Visões' },
-    { id: 'gantt', label: 'Cronograma Gantt', icon: Layers, category: 'Visões' },
-    { id: 'android', label: 'Aplicativo Android & APK', icon: Smartphone, category: 'Módulos' },
-    { id: 'templates', label: 'Modelos & Recorrências', icon: Repeat, category: 'Módulos' },
-    { id: 'sla', label: 'Gestão de SLA & Horário Útil', icon: Clock, category: 'Módulos' },
-    { id: 'risks', label: 'Gestão de Riscos & Matriz 5x5', icon: AlertTriangle, category: 'Módulos' },
-    { id: 'reports', label: 'Relatórios Programados', icon: Calendar, category: 'Módulos' },
-    { id: 'api_webhooks', label: 'API REST & Webhooks', icon: Code2, category: 'Módulos' },
-    { id: 'system_health', label: 'Saúde & Backup Enterprise', icon: Activity, category: 'Módulos' }
   ];
 
-  const matchedViews = views.filter((v) =>
-    v.label.toLowerCase().includes(search.toLowerCase())
-  );
+  const matchedViews = views.filter((v) => isViewEnabled(v.id) && v.label.toLowerCase().includes(search.toLowerCase()));
 
   const matchedDemands = demands
     .filter(
@@ -115,6 +98,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({ isOpen
 
   return (
     <div
+      data-modal-overlay="true"
       className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-start justify-center pt-20 p-4"
       onClick={onClose}
     >

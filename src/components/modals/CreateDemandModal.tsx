@@ -4,37 +4,40 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
 import { Demand } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
-import { ClientRecord } from './ClientModal';
+import { ClientModal, ClientRecord } from './ClientModal';
 import { apiClient } from '../../services/apiClient';
+import { DEFAULT_CHECKLIST_TEXT } from '../../data/defaultChecklist';
+import { toLocalDateInput } from '../../utils/date';
+import { MotionButton } from '../motion/MotionButton';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   X,
   Plus,
   Calendar,
   Layers,
   Sparkles,
-  Info,
   Clock,
   User,
   Users,
   CheckCircle2,
-  Save,
-  RotateCcw,
   AlertCircle,
   Mic,
   MicOff,
   Volume2,
-  Loader2
+  Loader2,
+  Search
 } from 'lucide-react';
 
-const DRAFT_STORAGE_KEY = 'gd_draft_new_demand_v1';
-const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
-const todayInput = () => formatDateInput(new Date());
-const defaultDueInput = () => formatDateInput(new Date(Date.now() + 7 * 86400000));
+const todayInput = () => toLocalDateInput();
+const defaultDueInput = () => toLocalDateInput(new Date(Date.now() + 7 * 86400000));
+const defaultChecklist = DEFAULT_CHECKLIST_TEXT;
 
 export const CreateDemandModal: React.FC = () => {
+  const reduceMotion = useReducedMotion();
   const {
     isCreateModalOpen,
     setIsCreateModalOpen,
@@ -56,6 +59,9 @@ export const CreateDemandModal: React.FC = () => {
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [clientId, setClientId] = useState('');
   const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [dueDate, setDueDate] = useState(defaultDueInput);
   const [plannedStartDate, setPlannedStartDate] = useState(todayInput);
   const [estimatedHours, setEstimatedHours] = useState(16);
@@ -67,15 +73,8 @@ export const CreateDemandModal: React.FC = () => {
   const [howExecutionGuide, setHowExecutionGuide] = useState('');
 
   // Initial checklist items (separated by line)
-  const [checklistRaw, setChecklistRaw] = useState(
-    'Etapa 1: Alinhamento inicial de escopo\nEtapa 2: Execução técnica\nEtapa 3: Validação e entrega'
-  );
+  const [checklistRaw, setChecklistRaw] = useState(defaultChecklist);
 
-  // Auto-save feedback states
-  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isDraftRestored, setIsDraftRestored] = useState(false);
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Web Speech API State
   const [isListening, setIsListening] = useState(false);
@@ -97,7 +96,10 @@ export const CreateDemandModal: React.FC = () => {
 
   useEffect(() => {
     const loadClients = () => { apiClient.clients().then(setClients).catch(() => setClients([])); };
-    loadClients(); window.addEventListener('prolog:clients-updated', loadClients);
+    if (isCreateModalOpen) {
+      loadClients();
+    }
+    window.addEventListener('prolog:clients-updated', loadClients);
     return () => window.removeEventListener('prolog:clients-updated', loadClients);
   }, [isCreateModalOpen]);
 
@@ -204,7 +206,6 @@ export const CreateDemandModal: React.FC = () => {
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Erro no reconhecimento de voz:', event.error);
         if (event.error === 'not-allowed') {
           showToast({
             type: 'error',
@@ -231,8 +232,7 @@ export const CreateDemandModal: React.FC = () => {
 
       recognitionRef.current = recognition;
       recognition.start();
-    } catch (err: any) {
-      console.error('Falha ao iniciar reconhecimento de voz:', err);
+    } catch {
       showToast({
         type: 'error',
         title: 'Erro ao Iniciar Microfone',
@@ -243,128 +243,12 @@ export const CreateDemandModal: React.FC = () => {
     }
   };
 
-  // Restore draft from localStorage on component mount
-  useEffect(() => {
-    try {
-      const savedDraftRaw = null;
-      if (savedDraftRaw) {
-        const saved = JSON.parse(savedDraftRaw);
-        if (saved && (saved.title || saved.whyReason || saved.whatDescription || saved.whereLocation || saved.howExecutionGuide)) {
-          if (saved.title) setTitle(saved.title);
-          if (saved.categoryId) setCategoryId(saved.categoryId);
-          if (saved.priorityId) setPriorityId(saved.priorityId);
-          if (saved.teamId) setTeamId(saved.teamId);
-          if (saved.assigneeId) setAssigneeId(saved.assigneeId);
-          if (saved.dueDate) setDueDate(saved.dueDate);
-          if (saved.plannedStartDate) setPlannedStartDate(saved.plannedStartDate);
-          if (saved.whatDescription) setWhatDescription(saved.whatDescription);
-          if (saved.whyReason) setWhyReason(saved.whyReason);
-          if (saved.whereLocation) setWhereLocation(saved.whereLocation);
-          if (saved.howExecutionGuide) setHowExecutionGuide(saved.howExecutionGuide);
-          if (saved.checklistRaw) setChecklistRaw(saved.checklistRaw);
-          if (saved.savedAt) {
-            const date = new Date(saved.savedAt);
-            setLastSavedTime(date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-          }
-          setIsDraftRestored(true);
-        }
-      }
-    } catch (err) {
-      console.warn('Erro ao restaurar rascunho de demanda:', err);
-    }
-  }, []);
-
-  // Periodic Debounced Auto-Save to LocalStorage
-  useEffect(() => {
-    // Only auto-save if modal is open and has any entered text
-    if (!isCreateModalOpen) return;
-
-    const hasAnyContent = Boolean(
-      title.trim() ||
-      whatDescription.trim() ||
-      whyReason.trim() ||
-      whereLocation.trim() ||
-      howExecutionGuide.trim()
-    );
-
-    if (!hasAnyContent) return;
-
-    setIsSaving(true);
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-
-    autoSaveTimerRef.current = setTimeout(() => {
-      try {
-        const now = new Date();
-        const draftPayload = {
-          title,
-          categoryId,
-          priorityId,
-          teamId,
-          assigneeId,
-          dueDate,
-          plannedStartDate,
-          estimatedHours,
-          whatDescription,
-          whyReason,
-          whereLocation,
-          howExecutionGuide,
-          checklistRaw,
-          savedAt: now.toISOString()
-        };
-        void draftPayload;
-        setLastSavedTime(now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-        setIsSaving(false);
-      } catch (e) {
-        console.error('Falha ao salvar rascunho localmente:', e);
-        setIsSaving(false);
-      }
-    }, 800);
-
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
-  }, [
-    isCreateModalOpen,
-    title,
-    categoryId,
-    priorityId,
-    teamId,
-    assigneeId,
-    dueDate,
-    plannedStartDate,
-    estimatedHours,
-    whatDescription,
-    whyReason,
-    whereLocation,
-    howExecutionGuide,
-    checklistRaw
-  ]);
-
-  const handleDiscardDraft = () => {
-    setTitle('');
-    setWhatDescription('');
-    setWhyReason('');
-    setWhereLocation('');
-    setHowExecutionGuide('');
-    setChecklistRaw('Etapa 1: Alinhamento inicial de escopo\nEtapa 2: Execução técnica\nEtapa 3: Validação e entrega');
-    setCategoryId(categories[0]?.id || 'cat-tarefa');
-    setPriorityId(priorities[2]?.id || 'prio-alta');
-    setTeamId(teams[0]?.id || 'team-dev');
-    setAssigneeId(currentUser.id);
-    setDueDate(defaultDueInput());
-    setPlannedStartDate(todayInput());
-    setLastSavedTime(null);
-    setIsDraftRestored(false);
-    showToast({
-      type: 'info',
-      title: 'Rascunho Descartado',
-      message: 'Os campos foram limpos e o rascunho local foi removido.'
-    });
+  const resetForm = () => {
+    setTitle('');setCategoryId(categories[0]?.id || 'cat-tarefa');setPriorityId(priorities[2]?.id || priorities[0]?.id || 'prio-alta');setTeamId(teams[0]?.id || '');setAssigneeId(currentUser.id);setClientId('');setClientSearch('');setDueDate(defaultDueInput());setPlannedStartDate(todayInput());setEstimatedHours(16);setWhatDescription('');setWhyReason('');setWhereLocation('');setHowExecutionGuide('');setChecklistRaw(defaultChecklist);setInterimText('');
   };
+  const closeModal = () => { resetForm(); setIsCreateModalOpen(false); };
 
-  if (!isCreateModalOpen) return null;
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
       showToast({
@@ -385,7 +269,8 @@ export const CreateDemandModal: React.FC = () => {
         completed: false
       }));
 
-    createDemand({
+    setIsSaving(true);
+    try { await createDemand({
       title: title.trim(),
       categoryId,
       priorityId,
@@ -406,20 +291,20 @@ export const CreateDemandModal: React.FC = () => {
       checklist: checklistItems,
       comments: [],
       attachments: []
-    } as any);
-
-    // Clean up local draft upon successful demand creation
-    try {
-    } catch (err) {
-      console.warn('Erro ao limpar rascunho:', err);
-    }
-
-    setIsCreateModalOpen(false);
+    } as any); resetForm(); setIsCreateModalOpen(false); }
+    catch (error) { showToast({type:'error',title:'Demanda não criada',message:error instanceof Error?error.message:'Não foi possível salvar a demanda.'}); }
+    finally { setIsSaving(false); }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-3xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+  const visibleClients = clients.filter(client => client.active && `${String(client.company||'')} ${String(client.name||'')} ${String(client.email||'')}`.toLowerCase().includes(clientSearch.trim().toLowerCase()));
+  const selectedCategoryName = categories.find(category => category.id === categoryId)?.name.trim().toLocaleLowerCase('pt-BR') || '';
+  const isDetailedCategory = selectedCategoryName === 'projeto' || selectedCategoryName === 'melhoria';
+
+  return <>
+    <AnimatePresence>
+    {isCreateModalOpen && (
+    <motion.div initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduceMotion ? 0 : 0.2 }} data-modal-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs overflow-y-auto">
+      <motion.div initial={reduceMotion ? false : { opacity: 0, scale: 0.95, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97, y: 8 }} transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.16, 1, 0.3, 1] }} className="relative w-full max-w-3xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[92vh] overflow-hidden">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-2.5 min-w-0">
@@ -428,36 +313,18 @@ export const CreateDemandModal: React.FC = () => {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
                   Cadastrar Nova Demanda (Metodologia 5W2H)
                 </h3>
-                {/* Auto-save status badge */}
-                <span
-                  className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${
-                    isSaving
-                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
-                      : lastSavedTime
-                      ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
-                  }`}
-                  title="O progresso do formulário é salvo periodicamente no navegador para evitar perdas"
-                >
-                  <Save className={`w-3 h-3 ${isSaving ? 'animate-pulse' : ''}`} />
-                  {isSaving
-                    ? 'Salvando rascunho...'
-                    : lastSavedTime
-                    ? `Salvo às ${lastSavedTime}`
-                    : 'Auto-save ativo'}
-                </span>
               </div>
-              <p className="text-xs text-slate-500 truncate">
+              <p className="text-sm text-slate-500 truncate">
                 Defina o que, por que, onde, como, quem e os prazos de entrega
               </p>
             </div>
           </div>
 
           <button
-            onClick={() => setIsCreateModalOpen(false)}
+            onClick={closeModal}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
             title="Fechar"
           >
@@ -465,28 +332,8 @@ export const CreateDemandModal: React.FC = () => {
           </button>
         </div>
 
-        {/* Restored Draft Alert Banner */}
-        {isDraftRestored && (
-          <div className="px-5 py-2.5 bg-blue-50 dark:bg-blue-950/50 border-b border-blue-100 dark:border-blue-900/50 flex items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200">
-              <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>
-                <strong>Rascunho recuperado:</strong> Restauramos os dados digitados anteriormente ({lastSavedTime ? `salvo às ${lastSavedTime}` : 'salvo no navegador'}).
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={handleDiscardDraft}
-              className="text-[11px] font-bold text-red-600 dark:text-red-400 hover:underline shrink-0 flex items-center gap-1"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Descartar Rascunho
-            </button>
-          </div>
-        )}
-
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto flex-1 space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto flex-1 space-y-4 text-sm">
           {/* Title with Voice Dictation */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -498,7 +345,7 @@ export const CreateDemandModal: React.FC = () => {
                   type="button"
                   onClick={() => toggleSpeechRecognition('title')}
                   title={isListening && activeSpeechField === 'title' ? 'Parar gravação' : 'Ditar título por voz'}
-                  className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg transition-all ${
+                  className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg transition-all ${
                     isListening && activeSpeechField === 'title'
                       ? 'bg-red-600 text-white animate-pulse shadow-xs shadow-red-500/40'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400'
@@ -524,7 +371,7 @@ export const CreateDemandModal: React.FC = () => {
               placeholder="Ex: Implementação da autenticação biométrica no App Mobile"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 font-semibold focus:ring-2 focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-900 dark:[color-scheme:dark]"
             />
           </div>
 
@@ -535,7 +382,7 @@ export const CreateDemandModal: React.FC = () => {
                 <label className="font-bold text-slate-800 dark:text-slate-200">
                   Descrição e Requisitos da Demanda (What / Detalhamento):
                 </label>
-                <span className="text-[10px] text-slate-400 font-normal">
+                <span className="text-xs text-slate-500 font-normal">
                   (O que precisa ser feito)
                 </span>
               </div>
@@ -574,7 +421,7 @@ export const CreateDemandModal: React.FC = () => {
                   )}
                 </button>
               ) : (
-                <span className="text-[10px] text-slate-400 italic">
+                <span className="text-xs text-slate-500 italic">
                   (Microfone não suportado no navegador)
                 </span>
               )}
@@ -595,7 +442,7 @@ export const CreateDemandModal: React.FC = () => {
 
               {/* Active voice dictation live feedback banner */}
               {isListening && activeSpeechField === 'whatDescription' && (
-                <div className="mt-1.5 p-2 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 rounded-lg flex items-center justify-between gap-2 text-[11px] text-red-700 dark:text-red-300 animate-in fade-in duration-200">
+                <div className="mt-1.5 p-2 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 rounded-lg flex items-center justify-between gap-2 text-xs text-red-700 dark:text-red-300 animate-in fade-in duration-200">
                   <div className="flex items-center gap-2 min-w-0">
                     <Volume2 className="w-4 h-4 text-red-600 animate-pulse shrink-0" />
                     <span className="truncate">
@@ -605,7 +452,7 @@ export const CreateDemandModal: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => toggleSpeechRecognition('whatDescription')}
-                    className="text-[10px] font-bold bg-red-600 hover:bg-red-700 text-white px-2 py-0.5 rounded shrink-0 transition-colors"
+                    className="text-xs font-bold bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded shrink-0 transition-colors"
                   >
                     Concluir
                   </button>
@@ -621,7 +468,7 @@ export const CreateDemandModal: React.FC = () => {
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Categoria:
               </label>
-              <select
+              <AppSelect
                 value={categoryId}
                 onChange={(e) => setCategoryId(e.target.value)}
                 className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold"
@@ -631,7 +478,7 @@ export const CreateDemandModal: React.FC = () => {
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
 
             {/* Priority */}
@@ -639,7 +486,7 @@ export const CreateDemandModal: React.FC = () => {
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Prioridade:
               </label>
-              <select
+              <AppSelect
                 value={priorityId}
                 onChange={(e) => setPriorityId(e.target.value)}
                 className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold"
@@ -649,7 +496,7 @@ export const CreateDemandModal: React.FC = () => {
                     {p.name}
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
 
             {/* Team */}
@@ -657,7 +504,7 @@ export const CreateDemandModal: React.FC = () => {
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Equipe Envolvida:
               </label>
-              <select
+              <AppSelect
                 value={teamId}
                 onChange={(e) => setTeamId(e.target.value)}
                 className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold"
@@ -667,17 +514,25 @@ export const CreateDemandModal: React.FC = () => {
                     {t.name}
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
           </div>
 
           {/* Assignee & Dates Row */}
-          <div>
-            <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Cliente solicitante:</label>
-            <select value={clientId} onChange={event => setClientId(event.target.value)} className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="demand-client" className="block font-bold text-slate-700 dark:text-slate-300">Cliente solicitante:</label>
+              <button type="button" onClick={() => setIsClientModalOpen(true)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><Plus className="w-4 h-4" />Cadastrar cliente</button>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+              <input value={clientSearch} onChange={event => setClientSearch(event.target.value)} placeholder="Buscar por empresa, contato ou e-mail" className="w-full py-2 pl-9 pr-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100" />
+            </div>
+            <AppSelect id="demand-client" value={clientId} onChange={event => setClientId(event.target.value)} className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold">
               <option value="">Solicitação interna / sem cliente</option>
-              {clients.filter(client => client.active).map(client => <option key={client.id} value={client.id}>{client.company} — {client.name}</option>)}
-            </select>
+              {visibleClients.map(client => <option key={client.id} value={client.id}>{client.company} — {client.name}</option>)}
+            </AppSelect>
+            {clientSearch && visibleClients.length === 0 && <p className="text-xs text-amber-600">Nenhum cliente encontrado. Use “Cadastrar cliente”.</p>}
           </div>
 
           {/* Assignee & Dates Row */}
@@ -687,7 +542,7 @@ export const CreateDemandModal: React.FC = () => {
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Responsável Principal:
               </label>
-              <select
+              <AppSelect
                 value={assigneeId}
                 onChange={(e) => setAssigneeId(e.target.value)}
                 className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold"
@@ -697,7 +552,7 @@ export const CreateDemandModal: React.FC = () => {
                     {u.name} ({u.roleTitle})
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
 
             {/* Planned Start */}
@@ -729,8 +584,9 @@ export const CreateDemandModal: React.FC = () => {
           </div>
 
           {/* 5W2H: Why, Where, How */}
+          {isDetailedCategory && <>
           <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
-            <p className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">
+            <p className="font-bold text-slate-500 uppercase tracking-wider text-xs">
               Detalhamento 5W2H
             </p>
 
@@ -743,7 +599,7 @@ export const CreateDemandModal: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => toggleSpeechRecognition('whyReason')}
-                    className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg transition-all ${
+                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg transition-all ${
                       isListening && activeSpeechField === 'whyReason'
                         ? 'bg-red-600 text-white animate-pulse'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600'
@@ -788,7 +644,7 @@ export const CreateDemandModal: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => toggleSpeechRecognition('howExecutionGuide')}
-                      className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg transition-all ${
+                      className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg transition-all ${
                         isListening && activeSpeechField === 'howExecutionGuide'
                           ? 'bg-red-600 text-white animate-pulse'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600'
@@ -819,53 +675,38 @@ export const CreateDemandModal: React.FC = () => {
                 rows={3}
                 value={checklistRaw}
                 onChange={(e) => setChecklistRaw(e.target.value)}
-                className="w-full p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono text-[11px]"
+                className="w-full p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono text-sm"
               />
             </div>
           </div>
+          </>}
 
           {/* Actions */}
           <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center space-x-2 text-[11px] text-slate-500">
-              <span className="flex items-center gap-1">
-                <span className={`w-2 h-2 rounded-full ${isSaving ? 'bg-amber-500 animate-ping' : lastSavedTime ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                {isSaving
-                  ? 'Salvando alterações...'
-                  : lastSavedTime
-                  ? `Rascunho salvo às ${lastSavedTime}`
-                  : 'Salvamento automático no navegador ativo'}
-              </span>
-              {(title || whatDescription || whyReason || whereLocation) && (
-                <button
-                  type="button"
-                  onClick={handleDiscardDraft}
-                  className="text-slate-400 hover:text-red-500 underline ml-2 transition-colors"
-                >
-                  Limpar Rascunho
-                </button>
-              )}
-            </div>
-
             <div className="flex items-center justify-end space-x-2">
               <button
                 type="button"
-                onClick={() => setIsCreateModalOpen(false)}
+                onClick={closeModal}
                 className="px-4 py-2 bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-xl font-bold transition-colors hover:bg-slate-300 dark:hover:bg-slate-700"
               >
                 Cancelar
               </button>
 
-              <button
+              <MotionButton
                 type="submit"
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-md shadow-blue-500/30 transition-all active:scale-95 flex items-center space-x-1.5"
+                disabled={isSaving}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-md shadow-blue-500/30 transition-colors duration-150 flex items-center space-x-1.5 disabled:cursor-wait disabled:opacity-70"
               >
-                <Plus className="w-4 h-4" />
-                <span>Salvar e Criar Demanda</span>
-              </button>
+                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                <span>{isSaving?'Salvando...':'Salvar e Criar Demanda'}</span>
+              </MotionButton>
             </div>
           </div>
         </form>
-      </div>
-    </div>
-  );
+      </motion.div>
+    </motion.div>
+    )}
+    </AnimatePresence>
+    <ClientModal isOpen={isClientModalOpen} onClose={() => setIsClientModalOpen(false)} onCreated={client => { setClients(previous => [...previous.filter(item => item.id !== client.id), client]); setClientId(client.id); setClientSearch(client.company); showToast({type:'success',title:'Cliente cadastrado',message:`${client.company} foi selecionado nesta demanda.`}); }} />
+  </>;
 };

@@ -4,9 +4,14 @@
  */
 
 import React, { useState } from 'react';
+import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
 import { Demand, StatusConfig } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
+import { UserAvatar } from '../common/UserAvatar';
+import { formatCalendarDate, isCalendarDateOverdue, parseLocalCalendarDate } from '../../utils/date';
+import { motion, useReducedMotion } from 'framer-motion';
+import { staggerContainer, staggerItem } from '../motion/presets';
 import {
   Calendar,
   AlertTriangle,
@@ -21,6 +26,7 @@ import {
 } from 'lucide-react';
 
 export const ListView: React.FC = () => {
+  const reduceMotion = useReducedMotion();
   const {
     filteredDemands,
     users,
@@ -72,7 +78,7 @@ export const ListView: React.FC = () => {
             className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 border border-blue-200 dark:border-blue-800 flex items-center space-x-1.5 transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Exportar Linhas (.xlsx)</span>
+            <span>Exportar Linhas (.csv)</span>
           </button>
         </div>
       </div>
@@ -105,7 +111,7 @@ export const ListView: React.FC = () => {
             </thead>
 
             {/* Table Body */}
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+            <motion.tbody variants={reduceMotion ? undefined : staggerContainer(0.02, 0.025)} initial={reduceMotion ? false : 'hidden'} animate="visible" className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
               {filteredDemands.map((demand) => {
                 const category = categories.find(c => c.id === demand.categoryId) || categories[0];
                 const priority = priorities.find(p => p.id === demand.priorityId) || priorities[0];
@@ -115,14 +121,15 @@ export const ListView: React.FC = () => {
 
                 const isCompleted = status.category === 'completed';
                 const isCancelled = status.category === 'cancelled';
-                const dueDateObj = new Date(demand.dueDate);
-                const isOverdue = !isCompleted && !isCancelled && dueDateObj < now;
+                const dueDateObj = parseLocalCalendarDate(demand.dueDate, true);
+                const isOverdue = !isCompleted && !isCancelled && isCalendarDateOverdue(demand.dueDate, now);
 
                 const completedChk = demand.checklist.filter(c => c.completed).length;
                 const totalChk = demand.checklist.length;
 
                 return (
-                  <tr
+                  <motion.tr
+                    variants={reduceMotion ? undefined : staggerItem}
                     key={demand.id}
                     onClick={() => setSelectedDemand(demand)}
                     className={`hover:bg-blue-50/50 dark:hover:bg-slate-800/60 cursor-pointer transition-colors ${
@@ -179,10 +186,12 @@ export const ListView: React.FC = () => {
 
                     {/* Status Dropdown */}
                     <td className="p-3.5" onClick={(e) => e.stopPropagation()}>
-                      <select
+                      <AppSelect
                         value={demand.statusId}
                         onChange={(e) => moveDemandStatus(demand.id, e.target.value)}
-                        className="text-xs font-semibold rounded-lg px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        disabled={Boolean(demand.blocker?.isBlocked)}
+                        title={demand.blocker?.isBlocked ? 'Resolva o impedimento antes de alterar o status' : undefined}
+                        className="text-xs font-semibold rounded-lg px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
                         style={{ borderLeftColor: status.color, borderLeftWidth: '3px' }}
                       >
                         {statuses.map(s => (
@@ -190,7 +199,7 @@ export const ListView: React.FC = () => {
                             {s.name}
                           </option>
                         ))}
-                      </select>
+                      </AppSelect>
                     </td>
 
                     {/* Priority */}
@@ -205,11 +214,7 @@ export const ListView: React.FC = () => {
                     <td className="p-3.5">
                       {assignee ? (
                         <div className="flex items-center space-x-2">
-                          <img
-                            src={assignee.avatar}
-                            alt={assignee.name}
-                            className="w-6 h-6 rounded-full object-cover ring-1 ring-slate-200"
-                          />
+                          <UserAvatar name={assignee.name} src={assignee.avatar} className="w-6 h-6 rounded-full ring-1 ring-slate-200 text-[9px]" />
                           <span className="truncate max-w-[110px] font-medium text-slate-800 dark:text-slate-200">
                             {assignee.name}
                           </span>
@@ -231,7 +236,7 @@ export const ListView: React.FC = () => {
                         }`}
                       >
                         <Calendar className="w-3 h-3" />
-                        <span>{dueDateObj.toLocaleDateString('pt-BR')}</span>
+                        <span>{formatCalendarDate(demand.dueDate)}</span>
                       </span>
                     </td>
 
@@ -266,7 +271,7 @@ export const ListView: React.FC = () => {
                         <span className="text-slate-300 dark:text-slate-600">-</span>
                       )}
                     </td>
-                  </tr>
+                  </motion.tr>
                 );
               })}
 
@@ -277,7 +282,7 @@ export const ListView: React.FC = () => {
                   </td>
                 </tr>
               )}
-            </tbody>
+            </motion.tbody>
           </table>
         </div>
       </div>

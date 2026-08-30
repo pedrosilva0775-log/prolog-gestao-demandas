@@ -264,7 +264,7 @@ export const INITIAL_STATUSES: StatusConfig[] = [
   {
     id: 'status-planejada',
     name: 'Planejada',
-    description: 'Escopo aprovado, cronograma definido e aguardando data de início da sprint.',
+    description: 'Escopo aprovado, cronograma definido e aguardando a data planejada de início.',
     category: 'open',
     color: '#8B5CF6',
     textColor: 'text-purple-700 dark:text-purple-300',
@@ -1532,18 +1532,6 @@ export const INITIAL_TRACEABILITY_MATRIX: TraceabilityItem[] = [
     homologationStatus: 'Aprovado'
   },
   {
-    id: 'trc-06',
-    requirementNumber: 6,
-    requirementName: 'Gantt e planejamento avançado',
-    screenModule: 'Linha do Tempo / Cronograma Gantt',
-    businessRule: 'Dependências (FS, SS, FF, SF), caminho crítico, marcos, linha de base original vs atual, replanejamento com justificativa e exportação.',
-    authorizedRoles: ['admin', 'gestor', 'colaborador', 'diretoria'],
-    testExecuted: 'Cálculo de dependências predecessoras, destaque do caminho crítico e comparação gráfica com a linha de base original.',
-    testResult: 'pass',
-    evidence: 'TimelineView / Gantt com zoom por dia/semana/mês/trimestre e exportação.',
-    homologationStatus: 'Aprovado'
-  },
-  {
     id: 'trc-07',
     requirementNumber: 7,
     requirementName: 'Capacidade e carga de trabalho',
@@ -1583,7 +1571,7 @@ export const INITIAL_TRACEABILITY_MATRIX: TraceabilityItem[] = [
     id: 'trc-10',
     requirementNumber: 10,
     requirementName: 'Comunicação e colaboração',
-    screenModule: 'Feed Colaborativo & Timeline',
+    screenModule: 'Feed Colaborativo & Histórico',
     businessRule: 'Menções @usuário, seguidores, registro de decisões, reações, histórico de versões de documentos e comentários confidenciais.',
     authorizedRoles: ['admin', 'gestor', 'colaborador', 'diretoria'],
     testExecuted: 'Inclusão de comentário com marcação de decisão formal e controle de visualização confidencial.',
@@ -1965,13 +1953,17 @@ export const INITIAL_AUTOMATIONS: AutomationRule[] = [
 ];
 
 export const ALL_RBAC_PERMISSIONS: RbacPermissionRule[] = [
-  // 1. Demandas Gerais (Kanban, Lista, Calendário, Linha do Tempo)
+  // 1. Demandas Gerais (Kanban, Lista e Calendário)
   { id: 'demands:read', module: 'demands', action: 'read', name: 'Visualizar Demandas', description: 'Consultar demandas no quadro Kanban, lista e calendário de prazos.' },
   { id: 'demands:create', module: 'demands', action: 'create', name: 'Criar Demandas', description: 'Cadastrar novas demandas no formulário 5W2H ou via Quick Add.' },
   { id: 'demands:edit', module: 'demands', action: 'edit', name: 'Editar Demandas', description: 'Alterar parâmetros 5W2H, checklist, prazos e reatribuir responsáveis.' },
   { id: 'demands:delete', module: 'demands', action: 'delete', name: 'Excluir / Cancelar Demandas', description: 'Cancelar ou remover permanentemente demandas do sistema.' },
   { id: 'demands:approve', module: 'demands', action: 'approve', name: 'Aprovar & Homologar Demandas', description: 'Aprovar entregas, prorrogações de prazo e validar conclusões.' },
   { id: 'demands:export', module: 'demands', action: 'export', name: 'Exportar Demandas', description: 'Exportar dados de demandas em Excel, CSV e PDF.' },
+  { id: 'comments:read', module: 'comments', action: 'read', name: 'Visualizar Comentários', description: 'Consultar comentários e imagens anexadas às demandas.' },
+  { id: 'comments:create', module: 'comments', action: 'create', name: 'Adicionar Comentários', description: 'Registrar comentários nas demandas.' },
+  { id: 'comments:edit', module: 'comments', action: 'edit', name: 'Editar Comentários Próprios', description: 'Editar comentários criados pelo próprio usuário.' },
+  { id: 'comments:admin', module: 'comments', action: 'admin', name: 'Gerenciar Comentários e Imagens', description: 'Editar comentários de outros usuários e anexar imagens.' },
 
   // 2. Segregação por Tipo: PROJETO ESTRATÉGICO
   { id: 'projects:read', module: 'projects', action: 'read', activityType: 'PROJETO', name: 'Visualizar Projetos Estratégicos', description: 'Consultar iniciativas categorizadas como Projetos.' },
@@ -2069,6 +2061,7 @@ export const INITIAL_ROLE_PERMISSIONS: RolePermissionsMap = {
 
   gestor: [
     'demands:read', 'demands:create', 'demands:edit', 'demands:delete', 'demands:approve', 'demands:export',
+    'comments:read', 'comments:create', 'comments:edit', 'comments:admin',
     'projects:read', 'projects:create', 'projects:edit', 'projects:delete', 'projects:approve',
     'improvements:read', 'improvements:create', 'improvements:edit', 'improvements:delete', 'improvements:approve',
     'tasks:read', 'tasks:create', 'tasks:edit', 'tasks:delete', 'tasks:approve',
@@ -2089,6 +2082,7 @@ export const INITIAL_ROLE_PERMISSIONS: RolePermissionsMap = {
 
   colaborador: [
     'demands:read', 'demands:create', 'demands:edit', 'demands:export',
+    'comments:read', 'comments:create', 'comments:edit',
     'projects:read',
     'improvements:read', 'improvements:create', 'improvements:edit',
     'tasks:read', 'tasks:create', 'tasks:edit', 'tasks:approve',
@@ -2103,6 +2097,7 @@ export const INITIAL_ROLE_PERMISSIONS: RolePermissionsMap = {
 
   diretoria: [
     'demands:read', 'demands:create', 'demands:edit', 'demands:approve', 'demands:export',
+    'comments:read', 'comments:create', 'comments:edit', 'comments:admin',
     'projects:read', 'projects:create', 'projects:edit', 'projects:approve',
     'improvements:read', 'improvements:approve',
     'tasks:read',
@@ -2120,4 +2115,3 @@ export const INITIAL_ROLE_PERMISSIONS: RolePermissionsMap = {
     'google_workspace:read'
   ]
 };
-

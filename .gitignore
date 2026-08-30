@@ -5,6 +5,9 @@ data/invitations.json
 build/
 dist/
 coverage/
+uploads/
+.test-uploads/
+backups/
 .DS_Store
 *.log
 .env*

@@ -4,9 +4,13 @@
  */
 
 import React, { useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { staggerContainer, staggerItem } from '../motion/presets';
 import { useApp } from '../../context/AppContext';
 import { IconRenderer } from '../common/IconRenderer';
+import { AnimatedNumber } from '../common/AnimatedNumber';
 import { ExportService } from '../../services/exportService';
+import { formatCalendarDate, isCalendarDateOverdue, parseLocalCalendarDate } from '../../utils/date';
 import {
   ResponsiveContainer,
   PieChart,
@@ -51,6 +55,9 @@ export const ExecutiveDashboard: React.FC = () => {
   } = useApp();
 
   const [isExportingPng, setIsExportingPng] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const reveal = reduceMotion ? {} : { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 } };
+  const chartAnimation = !reduceMotion;
 
   const now = new Date();
   const total = filteredDemands.length;
@@ -68,7 +75,7 @@ export const ExecutiveDashboard: React.FC = () => {
   const overdueDemands = filteredDemands.filter((d) => {
     const isComp = statuses.find((s) => s.id === d.statusId)?.category === 'completed';
     const isCanc = statuses.find((s) => s.id === d.statusId)?.category === 'cancelled';
-    return !isComp && !isCanc && new Date(d.dueDate) < now;
+    return !isComp && !isCanc && isCalendarDateOverdue(d.dueDate, now);
   });
   const overdueCount = overdueDemands.length;
 
@@ -79,7 +86,7 @@ export const ExecutiveDashboard: React.FC = () => {
   // SLA on-time rate calculation
   const onTimeCompleted = completedDemands.filter((d) => {
     if (!d.completedAt) return true;
-    return new Date(d.completedAt) <= new Date(d.dueDate);
+    return new Date(d.completedAt) <= parseLocalCalendarDate(d.dueDate, true);
   }).length;
   const slaOnTimeRate = completedCount > 0 ? Math.round((onTimeCompleted / completedCount) * 100) : 100;
 
@@ -157,7 +164,7 @@ export const ExecutiveDashboard: React.FC = () => {
   return (
     <div id="executive-dashboard-container" className="space-y-6 pb-8 font-sans">
       {/* Top Header & Export Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+      <motion.div {...reveal} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 260, damping: 28 }} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <Award className="w-5 h-5 text-blue-600 dark:text-blue-400" />
@@ -183,91 +190,97 @@ export const ExecutiveDashboard: React.FC = () => {
             className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 transition-all shadow-md shadow-blue-500/20"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Exportar Excel (.xlsx)</span>
+            <span>Exportar CSV (.csv)</span>
           </button>
         </div>
-      </div>
+      </motion.div>
 
       {/* KPI Highlight Grid - 4 to 6 sleek stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.09 } } }} className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Demandas */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={{ hidden: { opacity: 0, y: 12, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1 } }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 280, damping: 27 }} whileHover={reduceMotion ? undefined : { y: -2, transition: { type: 'spring', stiffness: 400, damping: 28 } }} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
             Total Demandas
           </p>
           <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{total}</span>
+            <AnimatedNumber value={total} duration={1200} delay={380} className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100" />
             <span className="text-[10px] bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-2 py-0.5 rounded font-semibold">
               100% sob gestão
             </span>
           </div>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
-            <div className="bg-blue-600 h-full rounded-full" style={{ width: '100%' }} />
+            <motion.div className="bg-blue-600 h-full rounded-full origin-left" initial={{ scaleX: 0 }} animate={{ scaleX: 1 }} transition={{ duration: reduceMotion ? 0 : 1.2, delay: 0.38, ease: [0.16, 1, 0.3, 1] }} />
           </div>
-        </div>
+        </motion.div>
 
         {/* Em Andamento */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={{ hidden: { opacity: 0, y: 12, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1 } }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 280, damping: 27 }} whileHover={reduceMotion ? undefined : { y: -2, transition: { type: 'spring', stiffness: 400, damping: 28 } }} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
             Em Andamento
           </p>
           <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{inProgressCount}</span>
+            <AnimatedNumber value={inProgressCount} duration={1200} delay={460} className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100" />
             <span className="text-[10px] bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300 px-2 py-0.5 rounded font-semibold">
               {total > 0 ? Math.round((inProgressCount / total) * 100) : 0}% do fluxo
             </span>
           </div>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
-            <div
+            <motion.div
               className="bg-sky-500 h-full rounded-full"
-              style={{ width: `${total > 0 ? (inProgressCount / total) * 100 : 0}%` }}
+              initial={{ width: 0 }}
+              animate={{ width: `${total > 0 ? (inProgressCount / total) * 100 : 0}%` }}
+              transition={{ duration: reduceMotion ? 0 : 1.2, delay: 0.46, ease: [0.16, 1, 0.3, 1] }}
             />
           </div>
-        </div>
+        </motion.div>
 
         {/* Atrasadas */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={{ hidden: { opacity: 0, y: 12, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1 } }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 280, damping: 27 }} whileHover={reduceMotion ? undefined : { y: -2, transition: { type: 'spring', stiffness: 400, damping: 28 } }} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
             Atrasadas
           </p>
           <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-red-600 dark:text-red-400">{overdueCount}</span>
+            <AnimatedNumber value={overdueCount} duration={1200} delay={540} className="text-3xl font-bold tabular-nums text-red-600 dark:text-red-400" />
             <span className="text-[10px] bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 px-2 py-0.5 rounded font-semibold">
               {overdueCount > 0 ? 'Ação Imediata' : 'Zero Atrasos'}
             </span>
           </div>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
-            <div
+            <motion.div
               className="bg-red-500 h-full rounded-full"
-              style={{ width: `${total > 0 ? Math.min(100, (overdueCount / total) * 100) : 0}%` }}
+              initial={{ width: 0 }}
+              animate={{ width: `${total > 0 ? Math.min(100, (overdueCount / total) * 100) : 0}%` }}
+              transition={{ duration: reduceMotion ? 0 : 1.2, delay: 0.54, ease: [0.16, 1, 0.3, 1] }}
             />
           </div>
-        </div>
+        </motion.div>
 
         {/* Concluídas & SLA */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={{ hidden: { opacity: 0, y: 12, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1 } }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 280, damping: 27 }} whileHover={reduceMotion ? undefined : { y: -2, transition: { type: 'spring', stiffness: 400, damping: 28 } }} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow">
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
             Concluídas (SLA: {slaOnTimeRate}%)
           </p>
           <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{completedCount}</span>
+            <AnimatedNumber value={completedCount} duration={1200} delay={620} className="text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400" />
             <span className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded font-semibold">
               Média {avgCompletionDays} dias
             </span>
           </div>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-3 overflow-hidden">
-            <div
+            <motion.div
               className="bg-emerald-500 h-full rounded-full"
-              style={{ width: `${total > 0 ? (completedCount / total) * 100 : 0}%` }}
+              initial={{ width: 0 }}
+              animate={{ width: `${total > 0 ? (completedCount / total) * 100 : 0}%` }}
+              transition={{ duration: reduceMotion ? 0 : 1.2, delay: 0.62, ease: [0.16, 1, 0.3, 1] }}
             />
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Row 1 Charts: Category Donut & Weekly Deliveries vs Inbound */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <motion.div variants={reduceMotion ? undefined : staggerContainer(0.08, 0.12)} initial={reduceMotion ? false : 'hidden'} animate="visible" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Category Breakdown */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-amber-500" />
@@ -287,6 +300,10 @@ export const ExecutiveDashboard: React.FC = () => {
                   outerRadius={85}
                   paddingAngle={5}
                   dataKey="value"
+                  isAnimationActive={chartAnimation}
+                  animationBegin={180}
+                  animationDuration={1000}
+                  animationEasing="ease-out"
                   label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                 >
                   {categoryData.map((entry, index) => (
@@ -300,10 +317,10 @@ export const ExecutiveDashboard: React.FC = () => {
               </PieChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </motion.div>
 
         {/* Weekly Trend: Inbound vs Completed */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
               <TrendingUp className="w-4 h-4 text-blue-500" />
@@ -322,18 +339,18 @@ export const ExecutiveDashboard: React.FC = () => {
                   contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                <Bar dataKey="criadas" name="Demandas Abertas" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="concluidas" name="Demandas Concluídas" fill="#10B981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="criadas" name="Demandas Abertas" fill="#3B82F6" radius={[4, 4, 0, 0]} isAnimationActive={chartAnimation} animationBegin={220} animationDuration={900} animationEasing="ease-out" />
+                <Bar dataKey="concluidas" name="Demandas Concluídas" fill="#10B981" radius={[4, 4, 0, 0]} isAnimationActive={chartAnimation} animationBegin={320} animationDuration={900} animationEasing="ease-out" />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Row 2: Status & Team Workload */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <motion.div variants={reduceMotion ? undefined : staggerContainer(0.16, 0.12)} initial={reduceMotion ? false : 'hidden'} animate="visible" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Status Distribution */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4 flex items-center gap-1.5">
             <Clock className="w-4 h-4 text-purple-500" />
             <span>Volume por Status do Fluxo</span>
@@ -348,14 +365,14 @@ export const ExecutiveDashboard: React.FC = () => {
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }}
                 />
-                <Bar dataKey="total" name="Quantidade" fill="#8B5CF6" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="total" name="Quantidade" fill="#8B5CF6" radius={[0, 4, 4, 0]} isAnimationActive={chartAnimation} animationBegin={260} animationDuration={950} animationEasing="ease-out" />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </motion.div>
 
         {/* Team Workload */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-4 flex items-center gap-1.5">
             <Users className="w-4 h-4 text-emerald-500" />
             <span>Carga Operacional por Equipe</span>
@@ -371,13 +388,13 @@ export const ExecutiveDashboard: React.FC = () => {
                   contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                <Bar dataKey="demandas" name="Total Demandas" fill="#0EA5E9" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="bloqueadas" name="Com Bloqueio" fill="#EF4444" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="demandas" name="Total Demandas" fill="#0EA5E9" radius={[4, 4, 0, 0]} isAnimationActive={chartAnimation} animationBegin={300} animationDuration={950} animationEasing="ease-out" />
+                <Bar dataKey="bloqueadas" name="Com Bloqueio" fill="#EF4444" radius={[4, 4, 0, 0]} isAnimationActive={chartAnimation} animationBegin={400} animationDuration={950} animationEasing="ease-out" />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Critical Demands Requiring Board Decision */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
@@ -398,13 +415,15 @@ export const ExecutiveDashboard: React.FC = () => {
           </span>
         </div>
 
-        <div className="p-5 space-y-3">
+        <motion.div variants={reduceMotion ? undefined : staggerContainer(0.08, 0.055)} initial={reduceMotion ? false : 'hidden'} animate="visible" className="p-5 space-y-3">
           {criticalActionDemands.map((demand) => {
             const assignee = users.find((u) => u.id === demand.assigneeId);
             const team = teams.find((t) => t.id === demand.teamId);
 
             return (
-              <div
+              <motion.div
+                variants={reduceMotion ? undefined : staggerItem}
+                whileHover={reduceMotion ? undefined : { x: 3 }}
                 key={demand.id}
                 onClick={() => setSelectedDemand(demand)}
                 className="p-4 bg-slate-50 dark:bg-slate-800/50 border-l-4 border-red-500 rounded-r-xl cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -442,11 +461,11 @@ export const ExecutiveDashboard: React.FC = () => {
                     </div>
                   )}
                   <div className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-700 dark:text-slate-300">
-                    Prazo: {new Date(demand.dueDate).toLocaleDateString('pt-BR')}
+                    Prazo: {formatCalendarDate(demand.dueDate)}
                   </div>
                   <ArrowUpRight className="w-4 h-4 text-blue-600" />
                 </div>
-              </div>
+              </motion.div>
             );
           })}
 
@@ -455,7 +474,7 @@ export const ExecutiveDashboard: React.FC = () => {
               Nenhuma demanda crítica ou bloqueada no momento. Toda a operação está em conformidade.
             </div>
           )}
-        </div>
+        </motion.div>
       </div>
     </div>
   );

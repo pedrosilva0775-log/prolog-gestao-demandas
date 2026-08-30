@@ -12,4 +12,4 @@ export const verifyPasswordHash = (password: string, stored: string | null) => {
   const expected = Buffer.from(expectedHex, 'hex');
   return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 };
-export const validPassword = (password: string) => password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
+export const validPassword = (password: string) => password.length >= 12 && /[A-Za-z]/.test(password) && /\d/.test(password);

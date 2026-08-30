@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { isCalendarDateOverdue } from '../../utils/date';
 import { SlaPolicy } from '../../types';
 import {
   Clock,
@@ -58,7 +59,7 @@ export const SlaManagementView: React.FC = () => {
   // SLA Compliance Calculations
   const totalDemands = demands.length;
   const breachedDemands = demands.filter(
-    (d) => d.sla?.isBreached || (new Date(d.dueDate).getTime() < Date.now() && d.progressPercent < 100)
+    (d) => d.sla?.isBreached || (isCalendarDateOverdue(d.dueDate) && d.progressPercent < 100)
   ).length;
   const complianceRate = totalDemands > 0 ? Math.round(((totalDemands - breachedDemands) / totalDemands) * 100) : 100;
 

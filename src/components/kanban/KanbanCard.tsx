@@ -4,8 +4,12 @@
  */
 
 import React from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { transitions } from '../motion/presets';
 import { Demand, User, Team, CategoryConfig, PriorityConfig, StatusConfig } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
+import { UserAvatar } from '../common/UserAvatar';
+import { formatCalendarDate, parseLocalCalendarDate } from '../../utils/date';
 import {
   Calendar,
   AlertTriangle,
@@ -32,9 +36,13 @@ interface KanbanCardProps {
   statuses: StatusConfig[];
   onClick: () => void;
   onStatusChange: (newStatusId: string) => void;
+  allowDrag?: boolean;
+  isDragging?: boolean;
+  isDropping?: boolean;
+  onPointerDragStart?: (event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
-export const KanbanCard: React.FC<KanbanCardProps> = ({
+const KanbanCardComponent: React.FC<KanbanCardProps> = ({
   demand,
   users,
   teams,
@@ -42,8 +50,13 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   priorities,
   statuses,
   onClick,
-  onStatusChange
+  onStatusChange,
+  allowDrag = true,
+  isDragging = false,
+  isDropping = false,
+  onPointerDragStart,
 }) => {
+  const reduceMotion = useReducedMotion();
   const category = categories.find(c => c.id === demand.categoryId) || categories[0];
   const priority = priorities.find(p => p.id === demand.priorityId) || priorities[0];
   const currentStatus = statuses.find(s => s.id === demand.statusId) || statuses[0];
@@ -51,7 +64,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   const team = teams.find(t => t.id === demand.teamId);
 
   const now = new Date();
-  const dueDateObj = new Date(demand.dueDate);
+  const dueDateObj = parseLocalCalendarDate(demand.dueDate, true);
   const isCompleted = currentStatus.category === 'completed';
   const isCancelled = currentStatus.category === 'cancelled';
   const isOverdue = !isCompleted && !isCancelled && dueDateObj < now;
@@ -59,20 +72,25 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
   const totalChecklist = demand.checklist.length;
   const completedChecklist = demand.checklist.filter(c => c.completed).length;
-
-  const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData('text/plain', demand.id);
-    e.dataTransfer.effectAllowed = 'move';
-  };
+  const hasRestriction = Boolean(demand.blocker?.isBlocked);
+  const isImpediment = hasRestriction && demand.blocker?.kind === 'impediment';
+  const isHardBlock = hasRestriction && !isImpediment;
 
   return (
-    <div
-      draggable
-      onDragStart={handleDragStart}
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.99 }}
+      exit={reduceMotion ? undefined : { opacity: 0, scale: 0.985, transition: { duration: 0.14 } }}
+      animate={reduceMotion ? undefined : isDragging ? { scale: 1.02, y: -2, boxShadow: '0 20px 34px rgba(15, 23, 42, 0.28)' } : isDropping ? { scale: [1.02, 0.985, 1], y: [0, 2, 0] } : { scale: 1, y: 0 }}
+      whileHover={reduceMotion || isDragging ? undefined : { y: -2, boxShadow: '0 12px 22px rgba(15, 23, 42, 0.16)' }}
+      transition={isDropping ? transitions.settle : transitions.micro}
+      onPointerDown={allowDrag && !isHardBlock ? onPointerDragStart : undefined}
       onClick={onClick}
-      className={`group relative bg-white dark:bg-slate-900 rounded-2xl p-4 border transition-all duration-200 cursor-pointer shadow-xs hover:shadow-md active:scale-[0.99] select-none font-sans ${
-        demand.blocker?.isBlocked
+      title={isHardBlock ? 'Resolva o bloqueio antes de alterar o status' : isImpediment ? 'Atividade com impedimento ativo; o status pode ser alterado' : undefined}
+      className={`group relative bg-white dark:bg-slate-900 rounded-2xl p-4 border cursor-pointer shadow-md select-none font-sans transition-[border-color,opacity] duration-150 ${isDragging ? 'opacity-40' : 'opacity-100'} ${
+        isHardBlock
           ? 'border-red-400/80 dark:border-red-800/80 ring-1 ring-red-400/40 bg-red-50/20 dark:bg-red-950/10'
+          : isImpediment
+          ? 'border-amber-400/80 dark:border-amber-800/80 ring-1 ring-amber-400/40 bg-amber-50/20 dark:bg-amber-950/10'
           : isOverdue
           ? 'border-amber-400/80 dark:border-amber-800/80 ring-1 ring-amber-400/30'
           : isCompleted
@@ -82,11 +100,11 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       id={`card-${demand.code.toLowerCase()}`}
     >
       {/* Blocker Alert Banner if active */}
-      {demand.blocker?.isBlocked && (
-        <div className="mb-2.5 px-2.5 py-1 bg-red-100 dark:bg-red-950/80 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-1.5 text-red-800 dark:text-red-300 text-[11px] font-semibold">
-          <ShieldAlert className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
+      {hasRestriction && (
+        <div className={`mb-2.5 px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-[11px] font-semibold border ${isImpediment ? 'bg-amber-100 dark:bg-amber-950/80 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300' : 'bg-red-100 dark:bg-red-950/80 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'}`}>
+          <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${isImpediment ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`} />
           <span className="truncate">
-            BLOQUEADA: {demand.blocker.reason || 'Impedimento registrado'}
+            {isImpediment ? 'IMPEDIDA' : 'BLOQUEADA'}: {demand.blocker?.reason || 'Restrição registrada'}
           </span>
         </div>
       )}
@@ -172,10 +190,10 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
               ? 'text-orange-700 dark:text-orange-400 bg-orange-100 dark:bg-orange-950/60 font-bold'
               : 'text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50'
           }`}
-          title={`Prazo: ${dueDateObj.toLocaleDateString('pt-BR')}`}
+          title={`Prazo: ${formatCalendarDate(demand.dueDate)}`}
         >
           <Calendar className="w-3 h-3" />
-          <span>{dueDateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>
+          <span>{formatCalendarDate(demand.dueDate, { day: '2-digit', month: '2-digit' })}</span>
           {isOverdue && <span className="text-[9px] uppercase font-black ml-0.5">Atraso</span>}
         </div>
 
@@ -210,12 +228,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
         {/* Assignee Avatar */}
         {assignee ? (
-          <img
-            src={assignee.avatar}
-            alt={assignee.name}
-            title={`Responsável: ${assignee.name} (${assignee.roleTitle})`}
-            className="w-6 h-6 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700"
-          />
+          <UserAvatar name={assignee.name} src={assignee.avatar} title={`Responsável: ${assignee.name} (${assignee.roleTitle})`} className="w-6 h-6 rounded-full ring-1 ring-slate-200 dark:ring-slate-700 text-[9px]" />
         ) : (
           <div
             className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-[10px] text-slate-500 font-bold"
@@ -225,6 +238,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 };
+
+export const KanbanCard = React.memo(KanbanCardComponent, (previous, next) =>
+  previous.demand === next.demand &&
+  previous.users === next.users &&
+  previous.teams === next.teams &&
+  previous.categories === next.categories &&
+  previous.priorities === next.priorities &&
+  previous.statuses === next.statuses &&
+  previous.allowDrag === next.allowDrag &&
+  previous.isDragging === next.isDragging &&
+  previous.isDropping === next.isDropping
+);

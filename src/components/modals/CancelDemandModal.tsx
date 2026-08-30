@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { Demand } from '../../types';
+import { formatCalendarDate } from '../../utils/date';
 import { useApp } from '../../context/AppContext';
 import {
   X,
@@ -92,7 +93,7 @@ export const CancelDemandModal: React.FC<CancelDemandModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
+    <div data-modal-overlay="true" data-modal-decision="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-red-200 dark:border-red-900/60 w-full max-w-lg overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-red-50/60 dark:bg-red-950/30 flex items-center justify-between">
@@ -127,7 +128,7 @@ export const CancelDemandModal: React.FC<CancelDemandModalProps> = ({
               {demand.title}
             </p>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Responsável: {demand.assigneeId ? 'Atribuído' : 'Não atribuído'} • Prazo atual: {new Date(demand.dueDate).toLocaleDateString('pt-BR')}
+              Responsável: {demand.assigneeId ? 'Atribuído' : 'Não atribuído'} • Prazo atual: {formatCalendarDate(demand.dueDate)}
             </p>
           </div>
 

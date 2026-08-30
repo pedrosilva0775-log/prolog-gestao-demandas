@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
 import { RiskItem } from '../../types';
 import {
@@ -230,7 +231,7 @@ export const RiskManagementView: React.FC = () => {
                   <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                     Probabilidade (1 a 5)
                   </label>
-                  <select
+                  <AppSelect
                     value={riskProb}
                     onChange={(e) => setRiskProb(Number(e.target.value))}
                     className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
@@ -240,13 +241,13 @@ export const RiskManagementView: React.FC = () => {
                     <option value={3}>3 - Média</option>
                     <option value={4}>4 - Alta</option>
                     <option value={5}>5 - Muito Alta</option>
-                  </select>
+                  </AppSelect>
                 </div>
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                     Impacto (1 a 5)
                   </label>
-                  <select
+                  <AppSelect
                     value={riskImp}
                     onChange={(e) => setRiskImp(Number(e.target.value))}
                     className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
@@ -256,7 +257,7 @@ export const RiskManagementView: React.FC = () => {
                     <option value={3}>3 - Moderado</option>
                     <option value={4}>4 - Alto</option>
                     <option value={5}>5 - Catastrófico</option>
-                  </select>
+                  </AppSelect>
                 </div>
               </div>
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, Route, ShieldCheck, Workflow } from 'lucide-react';
+import { csrfHeaders } from '../../services/csrf';
 
 declare global {
   interface Window {
@@ -21,7 +22,7 @@ type AuthenticatedUser = {
 const syncAuthenticatedUser = (_user: AuthenticatedUser) => undefined;
 
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [status, setStatus] = useState<'checking' | 'anonymous' | 'password-change' | 'authenticated'>('checking');
+  const [status, setStatus] = useState<'checking' | 'anonymous' | 'mfa' | 'password-change' | 'authenticated'>('checking');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
@@ -31,7 +32,12 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') || '');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+  const [mfaTicket, setMfaTicket] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
   const googleButtonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -63,10 +69,11 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
           setMessage('');
           try {
             const response = await fetch('/api/auth/google', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ credential })
+              method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, credentials: 'include', body: JSON.stringify({ credential })
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.message);
+            if (data.mfaRequired) { setMfaTicket(data.mfaTicket); setStatus('mfa'); return; }
             syncAuthenticatedUser(data.user);
             setStatus('authenticated');
           } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao entrar com Google.'); }
@@ -88,7 +95,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   useEffect(() => {
     const logout = async () => {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => undefined);
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include', headers: csrfHeaders() }).catch(() => undefined);
       setStatus('anonymous');
       setPassword('');
     };
@@ -102,15 +109,22 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setMessage('');
     try {
       const response = await fetch('/api/auth/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ email, password, remember })
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, credentials: 'include', body: JSON.stringify({ email, password, remember })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message);
+      if (data.mfaRequired) { setMfaTicket(data.mfaTicket); setPassword(''); setStatus('mfa'); return; }
       syncAuthenticatedUser(data.user);
       setCurrentPassword(password);
       setStatus(data.user.forcePasswordChange ? 'password-change' : 'authenticated');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao entrar.'); }
     finally { setLoading(false); }
+  };
+
+  const verifyMfa = async (event: React.FormEvent) => {
+    event.preventDefault();setLoading(true);setMessage('');
+    try{const response=await fetch('/api/auth/mfa/verify',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json',...csrfHeaders()},body:JSON.stringify({ticket:mfaTicket,code:mfaCode})});const data=await response.json();if(!response.ok)throw new Error(data.message);syncAuthenticatedUser(data.user);setMfaTicket('');setMfaCode('');setStatus(data.user.forcePasswordChange?'password-change':'authenticated');}
+    catch(error){setMessage(error instanceof Error?error.message:'Falha ao validar autenticação em dois fatores.');}finally{setLoading(false);}
   };
 
   const changeInitialPassword = async (event: React.FormEvent) => {
@@ -119,7 +133,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     if (newPassword !== confirmPassword) return setMessage('A confirmação da nova senha não confere.');
     setLoading(true);
     try {
-      const response = await fetch('/api/auth/change-password', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
+      const response = await fetch('/api/auth/change-password', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ currentPassword, newPassword }) });
       const data = response.status === 204 ? null : await response.json();
       if (!response.ok) throw new Error(data?.message || 'Não foi possível alterar a senha.');
       setPassword(''); setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
@@ -128,20 +142,35 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     finally { setLoading(false); }
   };
 
+  const requestPasswordReset = async () => {
+    if (!email) return setMessage('Informe seu e-mail para recuperar a senha.');
+    setLoading(true);setMessage('');
+    try{const response=await fetch('/api/auth/password-reset/request',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json',...csrfHeaders()},body:JSON.stringify({email})});const data=await response.json();setMessage(data.message||'Se a conta existir, as instruções serão enviadas.');}
+    catch{setMessage('Serviço de recuperação temporariamente indisponível.');}finally{setLoading(false);}
+  };
+
+  const confirmPasswordReset = async (event:React.FormEvent) => {
+    event.preventDefault();if(resetPassword!==resetConfirm)return setMessage('A confirmação da senha não confere.');setLoading(true);setMessage('');
+    try{const response=await fetch('/api/auth/password-reset/confirm',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json',...csrfHeaders()},body:JSON.stringify({token:resetToken,newPassword:resetPassword})});const data=response.status===204?null:await response.json();if(!response.ok)throw new Error(data?.message||'Não foi possível redefinir a senha.');window.history.replaceState({},'',window.location.pathname);setResetToken('');setResetPassword('');setResetConfirm('');setMessage('Senha redefinida. Entre com a nova senha.');}
+    catch(error){setMessage(error instanceof Error?error.message:'Não foi possível redefinir a senha.');}finally{setLoading(false);}
+  };
+
   if (status === 'checking') return (
     <div className="min-h-dvh bg-slate-950 flex items-center justify-center text-white" role="status">
       <LoaderCircle className="w-7 h-7 animate-spin" /><span className="sr-only">Validando sessão</span>
     </div>
   );
+  if(resetToken&&status==='anonymous')return <main className="min-h-dvh bg-slate-100 grid place-items-center p-5"><form onSubmit={confirmPasswordReset} className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-xl p-7 space-y-4"><h1 className="text-2xl font-black text-slate-950">Redefinir senha</h1><p className="text-sm text-slate-500">Use ao menos 12 caracteres, incluindo letras e números.</p><input required minLength={12} type="password" autoComplete="new-password" value={resetPassword} onChange={event=>setResetPassword(event.target.value)} placeholder="Nova senha" className="w-full h-12 px-4 rounded-xl border border-slate-300"/><input required minLength={12} type="password" autoComplete="new-password" value={resetConfirm} onChange={event=>setResetConfirm(event.target.value)} placeholder="Confirmar nova senha" className="w-full h-12 px-4 rounded-xl border border-slate-300"/>{message&&<div role="alert" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">{message}</div>}<button disabled={loading} className="w-full h-12 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-60">{loading?'Redefinindo...':'Redefinir senha'}</button></form></main>;
+  if(status==='mfa')return <main className="min-h-dvh bg-slate-100 grid place-items-center p-5"><form onSubmit={verifyMfa} className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-xl p-7 space-y-4"><div className="w-12 h-12 rounded-2xl bg-blue-600 text-white grid place-items-center"><ShieldCheck className="w-6 h-6"/></div><div><h1 className="text-2xl font-black text-slate-950">Verificação em duas etapas</h1><p className="text-sm text-slate-500 mt-2">Digite o código de 6 dígitos do autenticador ou um código de recuperação.</p></div><input required autoFocus autoComplete="one-time-code" inputMode="numeric" value={mfaCode} onChange={event=>setMfaCode(event.target.value.trim())} placeholder="000000" className="w-full h-12 px-4 rounded-xl border border-slate-300 text-center tracking-[0.25em] font-bold"/>{message&&<div role="alert" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">{message}</div>}<button disabled={loading} className="w-full h-12 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-60">{loading?'Verificando...':'Confirmar acesso'}</button><button type="button" onClick={()=>{setStatus('anonymous');setMfaTicket('');setMfaCode('');setMessage('');}} className="w-full text-xs font-bold text-slate-500">Voltar ao login</button></form></main>;
   if (status === 'password-change') return (
     <main className="min-h-dvh bg-slate-100 flex items-center justify-center p-5">
       <form onSubmit={changeInitialPassword} className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-xl p-7 space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white grid place-items-center font-black text-xl">P</div>
         <div><p className="text-xs font-extrabold uppercase tracking-widest text-blue-600">Primeiro acesso</p><h1 className="text-2xl font-black text-slate-950 mt-2">Crie sua senha definitiva</h1><p className="text-sm text-slate-500 mt-2">Por segurança, a senha provisória deve ser substituída antes de acessar o PROLOG.</p></div>
         <label className="block text-xs font-bold text-slate-700">Senha provisória<input required type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} className="mt-1.5 w-full h-12 px-4 rounded-xl border border-slate-300 bg-slate-50" /></label>
-        <label className="block text-xs font-bold text-slate-700">Nova senha<input required type="password" minLength={8} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1.5 w-full h-12 px-4 rounded-xl border border-slate-300 bg-slate-50" /></label>
-        <label className="block text-xs font-bold text-slate-700">Confirmar nova senha<input required type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} className="mt-1.5 w-full h-12 px-4 rounded-xl border border-slate-300 bg-slate-50" /></label>
-        <p className="text-xs text-slate-500">Use pelo menos 8 caracteres, incluindo letras e números.</p>
+        <label className="block text-xs font-bold text-slate-700">Nova senha<input required type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1.5 w-full h-12 px-4 rounded-xl border border-slate-300 bg-slate-50" /></label>
+        <label className="block text-xs font-bold text-slate-700">Confirmar nova senha<input required type="password" minLength={12} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} className="mt-1.5 w-full h-12 px-4 rounded-xl border border-slate-300 bg-slate-50" /></label>
+        <p className="text-xs text-slate-500">Use pelo menos 12 caracteres, incluindo letras e números.</p>
         {message && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">{message}</div>}
         <button disabled={loading} className="w-full h-12 rounded-xl bg-blue-600 text-white text-sm font-extrabold disabled:opacity-60">{loading ? 'Alterando...' : 'Alterar senha e continuar'}</button>
       </form>
@@ -157,7 +186,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
           <div><p className="font-black text-xl tracking-tight text-slate-900">PROLOG</p><p className="text-xs text-slate-500">Projetos que movem operações</p></div>
         </div>
         <div className="flex-1 min-h-0 flex items-center justify-center py-5">
-          <img src="/assets/branding/prolog-login-logistics.png" alt="Equipe coordenando tecnologia, projetos e operação logística" className="w-full max-h-[68vh] object-contain mix-blend-multiply" />
+          <img src="/branding/prolog-login-logistics.png" alt="Equipe coordenando tecnologia, projetos e operação logística" className="w-full max-h-[68vh] object-contain mix-blend-multiply" />
         </div>
         <div className="grid grid-cols-3 gap-3 relative z-10">
           {[['Logística', Route], ['Tecnologia', Workflow], ['Governança', ShieldCheck]].map(([label, Icon]) => (
@@ -185,8 +214,8 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
           <div className="flex items-center gap-4 mb-6"><span className="h-px bg-slate-200 flex-1" /><span className="text-xs text-slate-400">ou continue com e-mail</span><span className="h-px bg-slate-200 flex-1" /></div>
 
           <form onSubmit={submit} className="space-y-4">
-            <div><label htmlFor="login-email" className="block text-xs font-bold text-slate-700 mb-1.5">E-mail ou usuário</label><div className="relative"><Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" /><input id="login-email" required autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu.email@empresa.com.br" className="w-full h-12 pl-10 pr-4 rounded-xl border border-slate-300 bg-slate-50 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" /></div></div>
-            <div><div className="flex justify-between mb-1.5"><label htmlFor="login-password" className="text-xs font-bold text-slate-700">Senha</label><button type="button" onClick={() => setMessage('Solicite a redefinição ao administrador do PROLOG.')} className="text-xs font-semibold text-blue-600 hover:underline">Esqueci a senha</button></div><div className="relative"><LockKeyhole className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" /><input id="login-password" required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="w-full h-12 pl-10 pr-11 rounded-xl border border-slate-300 bg-slate-50 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" /><button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-3 p-1 text-slate-400 hover:text-slate-700" aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>{showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button></div></div>
+            <div><label htmlFor="login-email" className="block text-xs font-bold text-slate-700 mb-1.5">E-mail</label><div className="relative"><Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" /><input id="login-email" required type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu.email@empresa.com.br" className="w-full h-12 pl-10 pr-4 rounded-xl border border-slate-300 bg-slate-50 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" /></div></div>
+            <div><div className="flex justify-between mb-1.5"><label htmlFor="login-password" className="text-xs font-bold text-slate-700">Senha</label><button type="button" onClick={requestPasswordReset} className="text-xs font-semibold text-blue-600 hover:underline">Esqueci a senha</button></div><div className="relative"><LockKeyhole className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" /><input id="login-password" required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="w-full h-12 pl-10 pr-11 rounded-xl border border-slate-300 bg-slate-50 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" /><button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-3 p-1 text-slate-400 hover:text-slate-700" aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>{showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button></div></div>
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer w-fit"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="w-4 h-4 rounded accent-blue-600" />Lembrar este dispositivo</label>
             {message && <div role="alert" className="flex gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-3 text-xs text-amber-900"><AlertCircle className="w-4 h-4 shrink-0" />{message}</div>}
             <button disabled={loading} className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-extrabold shadow-lg shadow-blue-500/20 transition-all active:scale-[0.99] flex items-center justify-center gap-2">{loading ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{loading ? 'Validando...' : 'Entrar no PROLOG'}</button>

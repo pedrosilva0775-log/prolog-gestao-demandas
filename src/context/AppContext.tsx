@@ -43,8 +43,9 @@ import {
   UserCustomPermissions,
   UserRole
 } from '../types';
+import { createDefaultChecklist } from '../data/defaultChecklist';
+import { formatCalendarDate, isCalendarDateOverdue, parseLocalCalendarDate, toLocalDateInput } from '../utils/date';
 import { StorageService } from '../services/storage';
-import { GoogleService } from '../services/googleService';
 import { apiClient, ApiError } from '../services/apiClient';
 import { ALL_RBAC_PERMISSIONS, INITIAL_ROLE_PERMISSIONS, INITIAL_CATEGORIES, INITIAL_STATUSES, INITIAL_PRIORITIES } from '../data/initialData';
 import confetti from 'canvas-confetti';
@@ -127,6 +128,7 @@ interface AppContextType {
   toggleBlocker: (id: string, blocker: BlockerInfo) => Promise<void>;
   extendDeadline: (id: string, newDueDate: string, reason: string) => Promise<void>;
   addComment: (demandId: string, content: string, attachments?: Attachment[], isDecision?: boolean, isConfidential?: boolean) => Promise<void>;
+  editComment: (demandId: string, commentId: string, content: string) => Promise<void>;
   toggleChecklist: (demandId: string, itemId: string) => Promise<void>;
   completeDemand: (demandId: string, summary: string) => Promise<void>;
 
@@ -190,12 +192,12 @@ interface AppContextType {
   resolveConflict: (queueItemId: string, resolution: 'local_wins' | 'server_wins' | 'merge') => void;
 
   // Management CRUD
-  createTeam: (team: Omit<Team, 'id'>) => void;
-  updateTeam: (id: string, updates: Partial<Team>) => void;
+  createTeam: (team: Omit<Team, 'id'>) => Promise<Team>;
+  updateTeam: (id: string, updates: Partial<Team>) => Promise<void>;
   deleteTeam: (id: string) => void;
 
   createUser: (user: Omit<User, 'id'>, id?: string) => void;
-  updateUser: (id: string, updates: Partial<User>) => void;
+  updateUser: (id: string, updates: Partial<User>) => Promise<void>;
   deleteUser: (id: string) => void;
 
   updateCategory: (id: string, updates: Partial<CategoryConfig>) => void;
@@ -249,6 +251,7 @@ const DEFAULT_FILTERS: FilterState = {
   teamIds: [],
   assigneeIds: [],
   requesterIds: [],
+  clientIds: [],
   tags: [],
   onlyMyDemands: false,
   onlyCreatedByMe: false,
@@ -350,7 +353,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  useEffect(() => { apiClient.bootstrap().then(data => { setUsers(data.users); setTeams(data.teams); setDemands(data.demands); setAuditLogs(data.auditLogs || []); setCurrentUserIdState(data.currentUserId); if(data.configurations?.categories?.length)setCategories(data.configurations.categories); if(data.configurations?.statuses?.length)setStatuses(data.configurations.statuses); if(data.configurations?.priorities?.length)setPriorities(data.configurations.priorities); setDataError(''); }).catch(error => setDataError(error instanceof ApiError ? error.message : 'Não foi possível carregar os dados corporativos.')).finally(()=>setDataLoading(false)); }, []);
+  useEffect(() => { Promise.all([apiClient.bootstrap(),apiClient.sessions()]).then(([data,sessions]) => { setUsers(data.users); setTeams(data.teams); setDemands(data.demands); setAuditLogs(data.auditLogs || []); setSecuritySessions(sessions); setCurrentUserIdState(data.currentUserId); if(data.configurations?.categories?.length)setCategories(data.configurations.categories); if(data.configurations?.statuses?.length)setStatuses(data.configurations.statuses); if(data.configurations?.priorities?.length)setPriorities(data.configurations.priorities); setDataError(''); }).catch(error => setDataError(error instanceof ApiError ? error.message : 'Não foi possível carregar os dados corporativos.')).finally(()=>setDataLoading(false)); }, []);
 
   // Handle Theme
   useEffect(() => {
@@ -503,9 +506,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // DEMAND CRUD & WORKFLOW ACTIONS
   // ----------------------------------------------------
   const createDemand = async (demandData: Partial<Demand>): Promise<Demand> => {
-    const year = new Date().getFullYear();
-    const count = demands.length + 1;
-    const code = `DEM-${year}-${String(count).padStart(3, '0')}`;
+    // O servidor atribui o código definitivo sob bloqueio transacional.
+    const code = 'AUTO';
 
     const newDemand: Demand = {
       id: `dem-${Date.now()}`,
@@ -531,7 +533,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       priorityId: demandData.priorityId || priorities[2].id,
       progressPercent: demandData.progressPercent || 0,
       tags: demandData.tags || [],
-      checklist: demandData.checklist || [],
+      checklist: demandData.checklist?.length ? demandData.checklist : createDefaultChecklist(),
       dependencies: demandData.dependencies || [],
       advancedDependencies: demandData.advancedDependencies || [],
       blocker: demandData.blocker || { isBlocked: false },
@@ -575,10 +577,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Audit Log
     addAuditLog({
-      demandId: newDemand.id,
-      demandCode: newDemand.code,
+      demandId: persistedDemand.id,
+      demandCode: persistedDemand.code,
       action: 'Criação de Demanda',
-      details: `Demanda ${newDemand.code} cadastrada com prioridade ${priorities.find(p => p.id === newDemand.priorityId)?.name}.`
+      details: `Demanda ${persistedDemand.code} cadastrada com prioridade ${priorities.find(p => p.id === persistedDemand.priorityId)?.name}.`
     });
 
     // Notify Assignee if not the creator
@@ -599,22 +601,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       message: `[${newDemand.code}] "${newDemand.title}" cadastrada no sistema.`
     });
 
-    // Run Automation Trigger
-    const isCritical = priorities.find(p => p.id === newDemand.priorityId)?.level === 5;
-    const trigger = isCritical ? 'demand_critical_created' : 'demand_created';
-    const assignee = users.find(u => u.id === newDemand.assigneeId);
-    
-    GoogleService.runAutomationTrigger(trigger, newDemand, automations, assignee).then(({ executedRules }) => {
-      if (executedRules.length > 0) {
-        showToast({
-          type: 'info',
-          title: 'Google Workspace Sincronizado',
-          message: `${executedRules.length} automação(ões) executada(s): ${executedRules.join(', ')}.`
-        });
-      }
-    });
-
-    return newDemand;
+    return persistedDemand as Demand;
   };
 
   const updateDemand = async (id: string, updates: Partial<Demand>, justification?: string) => {
@@ -625,14 +612,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       queueOfflineChange('UPDATE', 'demand', { id, ...updates });
     }
 
+    const persistedDemand = await apiClient.updateDemand(id, {
+      ...updates,
+      updatedByUserId: currentUser.id
+    }) as Demand;
     const updatedDemand: Demand = {
       ...existing,
-      ...updates,
-      updatedAt: new Date().toISOString(),
-      updatedByUserId: currentUser.id
+      ...persistedDemand
     };
-
-    await apiClient.updateDemand(id, updates);
     setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
     if (selectedDemand?.id === id) {
       setSelectedDemand(updatedDemand);
@@ -652,16 +639,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const existing = demands.find(d => d.id === id);
     if (!existing) return;
 
-    // Conceptual Rule: Do not hard delete if it has audit logs/history; archive instead
-    const updatedDemand: Demand = {
-      ...existing,
-      statusId: statuses.find(s => s.category === 'cancelled')?.id || existing.statusId,
-      updatedAt: new Date().toISOString(),
-      updatedByUserId: currentUser.id
-    };
-
-    await apiClient.updateDemand(id, { statusId: updatedDemand.statusId });
-    setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
+    await apiClient.deleteDemand(id);
+    setDemands(prev => prev.filter(d => d.id !== id));
     if (selectedDemand?.id === id) {
       setSelectedDemand(null);
     }
@@ -683,6 +662,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const moveDemandStatus = async (id: string, newStatusId: string) => {
     const existing = demands.find(d => d.id === id);
     if (!existing || existing.statusId === newStatusId) return;
+
+    if (existing.blocker?.isBlocked && existing.blocker.kind !== 'impediment') {
+      showToast({
+        type: 'warning',
+        title: 'Atividade bloqueada',
+        message: 'Resolva o impedimento antes de alterar o status desta atividade.'
+      });
+      return;
+    }
 
     const oldStatus = statuses.find(s => s.id === existing.statusId);
     const newStatus = statuses.find(s => s.id === newStatusId);
@@ -727,9 +715,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedByUserId: currentUser.id
     };
 
-    setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
-    if (selectedDemand?.id === id) {
-      setSelectedDemand(updatedDemand);
+    // Optimistic update: reflect the movement immediately and roll it back if persistence fails.
+    setDemands(previous => previous.map(demand => demand.id === id ? updatedDemand : demand));
+    if (selectedDemand?.id === id) setSelectedDemand(updatedDemand);
+
+    try {
+      await apiClient.updateDemand(id, {
+        statusId: newStatusId,
+        progressPercent: progress,
+        sla: updatedSla,
+        completedAt: updatedDemand.completedAt,
+        completedByUserId: updatedDemand.completedByUserId,
+        updatedByUserId: currentUser.id
+      });
+    } catch (error) {
+      setDemands(previous => previous.map(demand => demand.id === id && demand.statusId === newStatusId ? existing : demand));
+      if (selectedDemand?.id === id) setSelectedDemand(existing);
+      showToast({
+        type: 'error',
+        title: 'Status não alterado',
+        message: error instanceof Error ? error.message : 'Não foi possível salvar a movimentação no servidor.'
+      });
+      return;
     }
 
     if (isCompleted) {
@@ -756,36 +763,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!existing) return;
 
     const blockedStatus = statuses.find(s => s.category === 'blocked');
-    const newStatusId = blocker.isBlocked ? (blockedStatus ? blockedStatus.id : existing.statusId) : existing.statusId;
-
-    const updatedDemand: Demand = {
-      ...existing,
-      statusId: newStatusId,
-      blocker: {
+    const initialStatus = statuses.find(s => s.category === 'open');
+    const taskCategory = categories.find(category => category.name.toLocaleLowerCase('pt-BR').includes('tarefa'));
+    let response: { demand: Demand; createdDemand?: Demand | null };
+    try {
+      response = await apiClient.setBlocker(id, {
         ...blocker,
-        blockedAt: blocker.isBlocked ? new Date().toISOString() : existing.blocker?.blockedAt,
-        blockedByUserId: blocker.isBlocked ? currentUser.id : existing.blocker?.blockedByUserId,
-        resolvedAt: !blocker.isBlocked ? new Date().toISOString() : undefined
-      },
-      updatedAt: new Date().toISOString(),
-      updatedByUserId: currentUser.id
-    };
-
-    setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
-    if (selectedDemand?.id === id) {
-      setSelectedDemand(updatedDemand);
+        blockedStatusId: blockedStatus?.id,
+        initialStatusId: initialStatus?.id || statuses[0]?.id,
+        taskCategoryId: taskCategory?.id || existing.categoryId
+      });
+    } catch (error) {
+      throw error instanceof Error ? error : new Error('Não foi possível salvar a alteração no servidor.');
     }
+
+    setDemands(prev => {
+      const updated = prev.map(d => (d.id === id ? response.demand : d));
+      return response.createdDemand && !updated.some(d => d.id === response.createdDemand!.id) ? [response.createdDemand, ...updated] : updated;
+    });
+    if (selectedDemand?.id === id) setSelectedDemand(response.demand);
 
     addAuditLog({
       demandId: id,
       demandCode: existing.code,
-      action: blocker.isBlocked ? 'Registro de Impedimento (Bloqueio)' : 'Resolução de Impedimento (Desbloqueio)',
-      details: blocker.isBlocked ? `Motivo: ${blocker.reason} (Impacto: ${blocker.impact})` : 'Impedimento resolvido.'
+      action: blocker.isBlocked ? (blocker.kind === 'impediment' ? 'Registro de Impedimento' : 'Registro de Bloqueio') : 'Resolução de Bloqueio / Impedimento',
+      details: blocker.isBlocked ? `Tipo: ${blocker.kind === 'impediment' ? 'Impedimento' : 'Bloqueio'}. Motivo: ${blocker.reason} (Impacto: ${blocker.impact})` : 'Bloqueio ou impedimento resolvido.'
     });
 
-    if (blocker.isBlocked) {
-      GoogleService.runAutomationTrigger('status_changed_to_blocked', updatedDemand, automations);
-    }
   };
 
   const extendDeadline = async (id: string, newDueDate: string, reason: string) => {
@@ -810,6 +814,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedByUserId: currentUser.id
     };
 
+    await apiClient.updateDemand(id, { dueDate: newDueDate, deadlineExtensions: updatedDemand.deadlineExtensions, updatedByUserId: currentUser.id });
     setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
     if (selectedDemand?.id === id) {
       setSelectedDemand(updatedDemand);
@@ -820,18 +825,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       demandCode: existing.code,
       action: 'Prorrogação de Prazo',
       fieldChanged: 'Prazo Limite',
-      previousValue: new Date(existing.dueDate).toLocaleDateString('pt-BR'),
-      newValue: new Date(newDueDate).toLocaleDateString('pt-BR'),
+      previousValue: formatCalendarDate(existing.dueDate),
+      newValue: formatCalendarDate(newDueDate),
       details: `Justificativa: ${reason}`
     });
 
     showToast({
       type: 'info',
       title: 'Prazo Prorrogado',
-      message: `[${existing.code}] agora vence em ${new Date(newDueDate).toLocaleDateString('pt-BR')}.`
+      message: `[${existing.code}] agora vence em ${formatCalendarDate(newDueDate)}.`
     });
 
-    GoogleService.runAutomationTrigger('deadline_changed', updatedDemand, automations);
   };
 
   const addComment = async (
@@ -844,17 +848,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const existing = demands.find(d => d.id === demandId);
     if (!existing) return;
 
-    const newComment: Comment = {
-      id: `comm-${Date.now()}`,
-      userId: currentUser.id,
-      userName: currentUser.name,
-      userAvatar: currentUser.avatar,
-      content,
-      createdAt: new Date().toISOString(),
-      attachments,
-      isDecision,
-      isConfidential
-    };
+    const newComment = await apiClient.addComment(demandId, { content, attachments: attachments || [] }) as Comment;
 
     const updatedComments = [...(existing.comments || []), newComment];
     const updatedDemand = {
@@ -875,6 +869,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       action: isDecision ? 'Registro de Decisão Formal' : 'Comentário Adicionado',
       details: isConfidential ? '[Comentário Confidencial Registrado]' : content.slice(0, 100)
     });
+  };
+
+  const editComment = async (demandId: string, commentId: string, content: string) => {
+    const existing = demands.find(d => d.id === demandId);
+    const comment = existing?.comments?.find(item => item.id === commentId);
+    if (!existing || !comment || !content.trim()) return;
+    const canEditAny = currentUser.role === 'admin' || currentUser.role === 'gestor' || currentUser.role === 'diretoria';
+    if (comment.userId !== currentUser.id && !canEditAny) {
+      showToast({ type: 'error', title: 'Acesso negado', message: 'Você não pode editar este comentário.' });
+      return;
+    }
+    const edited = await apiClient.editComment(demandId, commentId, { content: content.trim() }) as Comment;
+    const editedAt = edited.editedAt || new Date().toISOString();
+    const comments = existing.comments.map(item => item.id === commentId ? edited : item);
+    const updatedDemand = { ...existing, comments, updatedAt: editedAt, updatedByUserId: currentUser.id };
+    setDemands(previous => previous.map(item => item.id === demandId ? updatedDemand : item));
+    if (selectedDemand?.id === demandId) setSelectedDemand(updatedDemand);
+    addAuditLog({ demandId, demandCode: existing.code, action: 'Comentário Editado', details: `Comentário ${commentId} editado por ${currentUser.name}.` });
   };
 
   const toggleChecklist = async (demandId: string, itemId: string) => {
@@ -905,6 +917,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedByUserId: currentUser.id
     };
 
+    try {
+      await apiClient.updateDemand(demandId, { checklist: updatedChecklist, progressPercent, updatedByUserId: currentUser.id });
+    } catch (error) {
+      showToast({ type: 'error', title: 'Checklist não atualizado', message: error instanceof Error ? error.message : 'Falha ao salvar o checklist.' });
+      return;
+    }
     setDemands(prev => prev.map(d => (d.id === demandId ? updatedDemand : d)));
     if (selectedDemand?.id === demandId) {
       setSelectedDemand(updatedDemand);
@@ -927,9 +945,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedByUserId: currentUser.id
     };
 
-    setDemands(prev => prev.map(d => (d.id === demandId ? updatedDemand : d)));
+    const response = await apiClient.completeDemand(demandId, { statusId: updatedDemand.statusId, summary });
+    const persistedDemand = response.demand as Demand;
+    const autoUnblocked = (response.autoUnblocked || []) as Demand[];
+    setDemands(prev => prev.map(d => autoUnblocked.find(parent => parent.id === d.id) || (d.id === demandId ? persistedDemand : d)));
     if (selectedDemand?.id === demandId) {
-      setSelectedDemand(updatedDemand);
+      setSelectedDemand(persistedDemand);
     }
 
     confetti({
@@ -950,10 +971,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast({
       type: 'success',
       title: 'Demanda Concluída com Sucesso!',
-      message: `[${existing.code}] finalizada e homologada.`
+      message: autoUnblocked.length ? `[${existing.code}] finalizada e ${autoUnblocked.map(item => item.code).join(', ')} desbloqueada automaticamente.` : `[${existing.code}] finalizada e homologada.`
     });
 
-    GoogleService.runAutomationTrigger('status_changed_to_completed', updatedDemand, automations);
   };
 
   // ----------------------------------------------------
@@ -1116,7 +1136,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const triggerRecurringGeneration = async (): Promise<number> => {
     let generatedCount = 0;
     const now = new Date();
-    const todayKey = now.toISOString().slice(0, 10);
+    const todayKey = toLocalDateInput(now);
 
     for (const rule of recurringRules) {
       if (rule.active && !rule.isSuspended) {
@@ -1315,7 +1335,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       {
         dispatchedAt: new Date().toISOString(),
         recipients: rep.recipients || [],
-        dataVersion: `v${new Date().toISOString().slice(0, 10)}-rel`,
+        dataVersion: `v${toLocalDateInput()}-rel`,
         format: (rep.exportFormats || []).join(', ').toUpperCase(),
         status: 'success' as const
       }
@@ -1486,6 +1506,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ----------------------------------------------------
   const revokeSession = (id: string) => {
     setSecuritySessions(prev => prev.filter(s => s.id !== id));
+    apiClient.revokeSession(id).then(()=>{if(securitySessions.some(session=>session.id===id&&session.isCurrent))window.dispatchEvent(new CustomEvent('prolog:logout'));}).catch(error=>showToast({type:'error',title:'Sessão não revogada',message:error instanceof Error?error.message:'Falha na API.'}));
     showToast({
       type: 'info',
       title: 'Sessão Revogada',
@@ -1496,23 +1517,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ----------------------------------------------------
   // MANAGEMENT CRUD
   // ----------------------------------------------------
-  const createTeam = (teamData: Omit<Team, 'id'>) => {
-    const newTeam: Team = {
-      id: `team-${Date.now()}`,
-      ...teamData
-    };
+  const createTeam = async (teamData: Omit<Team, 'id'>) => {
+    const saved = await apiClient.createTeam(teamData) as Team;
+    const newTeam: Team = { ...teamData, ...saved };
     setTeams(prev => [...prev, newTeam]);
-    apiClient.createTeam(teamData).then(saved=>setTeams(prev=>prev.map(team=>team.id===newTeam.id?{...newTeam,id:saved.id}:team))).catch(error=>{setTeams(prev=>prev.filter(team=>team.id!==newTeam.id));showToast({type:'error',title:'Equipe não criada',message:error instanceof Error?error.message:'Falha na API.'});});
     showToast({
       type: 'success',
       title: 'Equipe Criada',
       message: `Equipe "${newTeam.name}" adicionada.`
     });
+    return newTeam;
   };
 
-  const updateTeam = (id: string, updates: Partial<Team>) => {
-    setTeams(prev => prev.map(t => (t.id === id ? { ...t, ...updates } : t)));
-    apiClient.updateTeam(id, updates).catch(error=>showToast({type:'error',title:'Equipe não atualizada',message:error instanceof Error?error.message:'Falha na API.'}));
+  const updateTeam = async (id: string, updates: Partial<Team>) => {
+    const saved = await apiClient.updateTeam(id, updates) as Partial<Team>;
+    setTeams(prev => prev.map(t => (t.id === id ? { ...t, ...updates, ...saved, id } : t)));
   };
 
   const deleteTeam = (id: string) => {
@@ -1533,16 +1552,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const updateUser = (id: string, updates: Partial<User>) => {
-    setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+  const updateUser = async (id: string, updates: Partial<User>) => {
+    const saved = await apiClient.updateUser(id,updates) as Partial<User>;
+    setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates, ...saved, id } : u)));
   };
 
   const deleteUser = (id: string) => {
-    setUsers(prev => prev.filter(u => u.id !== id));
+    setUsers(prev => prev.map(u=>(u.id===id?{...u,active:false}:u)));
+    apiClient.deactivateUser(id).catch(error=>showToast({type:'error',title:'Usuário não desativado',message:error instanceof Error?error.message:'Falha na API.'}));
   };
 
   const updateCategory = (id: string, updates: Partial<CategoryConfig>) => {
-    setCategories(prev => prev.map(c => (c.id === id ? { ...c, ...updates } : c)));
+    const next=categories.map(c => (c.id === id ? { ...c, ...updates } : c));setCategories(next);apiClient.updateConfiguration('categories',next).catch(error=>showToast({type:'error',title:'Configuração não salva',message:error instanceof Error?error.message:'Falha na API.'}));
   };
 
   const createCategory = (cat: Omit<CategoryConfig, 'id'>) => {
@@ -1550,15 +1571,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `cat-${Date.now()}`,
       ...cat
     };
-    setCategories(prev => [...prev, newCat]);
+    const next=[...categories,newCat];setCategories(next);apiClient.updateConfiguration('categories',next).catch(error=>showToast({type:'error',title:'Configuração não salva',message:error instanceof Error?error.message:'Falha na API.'}));
   };
 
   const deleteCategory = (id: string) => {
-    setCategories(prev => prev.filter(c => c.id !== id));
+    const next=categories.filter(c=>c.id!==id);setCategories(next);apiClient.updateConfiguration('categories',next).catch(error=>showToast({type:'error',title:'Configuração não salva',message:error instanceof Error?error.message:'Falha na API.'}));
   };
 
   const updateStatus = (id: string, updates: Partial<StatusConfig>) => {
-    setStatuses(prev => prev.map(s => (s.id === id ? { ...s, ...updates } : s)));
+    const next=statuses.map(s=>(s.id===id?{...s,...updates}:s));setStatuses(next);apiClient.updateConfiguration('statuses',next).catch(error=>showToast({type:'error',title:'Configuração não salva',message:error instanceof Error?error.message:'Falha na API.'}));
   };
 
   const createStatus = (statusData: Omit<StatusConfig, 'id'>) => {
@@ -1566,7 +1587,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `status-${Date.now()}`,
       ...statusData
     };
-    setStatuses(prev => [...prev, newStatus]);
+    const next=[...statuses,newStatus];setStatuses(next);apiClient.updateConfiguration('statuses',next).catch(error=>showToast({type:'error',title:'Configuração não salva',message:error instanceof Error?error.message:'Falha na API.'}));
   };
 
   const deleteStatus = (id: string) => {
@@ -1579,19 +1600,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         message: 'Status não pode ser excluído fisicamente para preservar o histórico. Utilize o arquivamento.'
       });
       // Soft archive
-      setStatuses(prev => prev.map(s => (s.id === id ? { ...s, isArchived: true, active: false } : s)));
+      const next=statuses.map(s=>(s.id===id?{...s,isArchived:true,active:false}:s));setStatuses(next);apiClient.updateConfiguration('statuses',next).catch(()=>undefined);
       return;
     }
-    setStatuses(prev => prev.filter(s => s.id !== id));
+    const next=statuses.filter(s=>s.id!==id);setStatuses(next);apiClient.updateConfiguration('statuses',next).catch(()=>undefined);
   };
 
   const reorderStatuses = (newStatuses: StatusConfig[]) => {
     const indexed = newStatuses.map((s, idx) => ({ ...s, order: idx + 1 }));
-    setStatuses(indexed);
+    setStatuses(indexed);apiClient.updateConfiguration('statuses',indexed).catch(()=>undefined);
   };
 
   const updatePriority = (id: string, updates: Partial<PriorityConfig>) => {
-    setPriorities(prev => prev.map(p => (p.id === id ? { ...p, ...updates } : p)));
+    const next=priorities.map(p=>(p.id===id?{...p,...updates}:p));setPriorities(next);apiClient.updateConfiguration('priorities',next).catch(()=>undefined);
   };
 
   const createPriority = (prioData: Omit<PriorityConfig, 'id'>) => {
@@ -1599,16 +1620,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `prio-${Date.now()}`,
       ...prioData
     };
-    setPriorities(prev => [...prev, newPrio]);
+    const next=[...priorities,newPrio];setPriorities(next);apiClient.updateConfiguration('priorities',next).catch(()=>undefined);
   };
 
   const toggleGoogleService = async (serviceKey: string, connected: boolean) => {
-    const updated = await GoogleService.toggleServiceConnection(googleServices, serviceKey, connected);
-    setGoogleServices(updated);
     showToast({
-      type: connected ? 'success' : 'info',
-      title: connected ? 'Serviço Conectado' : 'Serviço Desconectado',
-      message: `Google ${serviceKey.toUpperCase()} foi ${connected ? 'ativado' : 'desativado'}.`
+      type: 'warning',
+      title: 'Integração indisponível na v1',
+      message: `O serviço ${serviceKey} permanece desabilitado até existir integração server-side homologada (${connected?'ativação':'desativação'} não executada).`
     });
   };
 
@@ -1685,6 +1704,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return false;
       }
 
+      // External requesting clients. The special value keeps internal demands filterable.
+      if (filters.clientIds.length > 0) {
+        const matchesClient = demand.clientId
+          ? filters.clientIds.includes(demand.clientId)
+          : filters.clientIds.includes('__internal__');
+        if (!matchesClient) return false;
+      }
+
       // Tags
       if (filters.tags.length > 0 && !filters.tags.some(t => demand.tags.includes(t))) {
         return false;
@@ -1709,13 +1736,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (filters.onlyOverdue) {
         const isCompleted = statuses.find(s => s.id === demand.statusId)?.category === 'completed';
-        const isOverdue = new Date(demand.dueDate).getTime() < Date.now() && !isCompleted;
+        const isOverdue = isCalendarDateOverdue(demand.dueDate) && !isCompleted;
         if (!isOverdue) return false;
       }
 
       if (filters.onlyDueSoon) {
         const isCompleted = statuses.find(s => s.id === demand.statusId)?.category === 'completed';
-        const diffDays = (new Date(demand.dueDate).getTime() - Date.now()) / (1000 * 3600 * 24);
+        const diffDays = (parseLocalCalendarDate(demand.dueDate, true).getTime() - Date.now()) / (1000 * 3600 * 24);
         if (isCompleted || diffDays < 0 || diffDays > 3) return false;
       }
 
@@ -1742,7 +1769,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const resetRolePermissions = () => {
     setRolePermissions(INITIAL_ROLE_PERMISSIONS);
-    StorageService.setRolePermissions(INITIAL_ROLE_PERMISSIONS);
     addAuditLog({
       action: 'UPDATE_CONFIG',
       details: 'A matriz de permissões RBAC foi restaurada para os padrões originais de fábrica.'
@@ -1895,6 +1921,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toggleBlocker,
         extendDeadline,
         addComment,
+        editComment,
         toggleChecklist,
         completeDemand,
         triageInboxItem,

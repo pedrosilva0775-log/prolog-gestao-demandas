@@ -4,8 +4,10 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
 import { UserRole, RbacModule, RbacAction, RbacPermissionRule } from '../../types';
+import { UserAvatar } from '../common/UserAvatar';
 import {
   Shield,
   ShieldCheck,
@@ -249,7 +251,7 @@ export const RbacMatrixView: React.FC = () => {
               <span className="text-xs font-semibold text-blue-900 dark:text-blue-300 shrink-0">
                 Colaborador Testado:
               </span>
-              <select
+              <AppSelect
                 value={testUserId}
                 onChange={(e) => setTestUserId(e.target.value)}
                 className="px-3 py-1.5 rounded-xl border border-blue-300 dark:border-blue-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
@@ -260,18 +262,14 @@ export const RbacMatrixView: React.FC = () => {
                     {u.name} — {u.roleTitle || u.role} ({ROLE_INFO[u.role].label})
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
           </div>
 
           {/* User Status Bar */}
           <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-blue-200 dark:border-blue-900 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-3">
-              <img
-                src={testUser.avatar}
-                alt={testUser.name}
-                className="w-8 h-8 rounded-full object-cover ring-2 ring-blue-500 shrink-0"
-              />
+              <UserAvatar name={testUser.name} src={testUser.avatar} className="w-8 h-8 rounded-full ring-2 ring-blue-500 text-[10px]" />
               <div>
                 <span className="font-bold text-slate-900 dark:text-slate-100">{testUser.name}</span>
                 <span className="text-slate-500 dark:text-slate-400 ml-1.5 font-medium">({testUser.email})</span>

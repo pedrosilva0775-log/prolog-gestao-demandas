@@ -1,5 +1,28 @@
 # Relatório de auditoria técnica — PROLOG
 
+> Atualização de implementação — 19/08/2026: este relatório registra a
+> avaliação original de 18/08/2026. Desde então, os bloqueadores principais
+> começaram a ser tratados: PostgreSQL, migrations, sessões persistentes,
+> API autenticada para demandas/clientes/equipes, RBAC por endpoint, auditoria
+> append-only, Helmet/CSP, proteção de origem, validação Zod e testes automatizados
+> já existem no repositório. O bundle inicial também foi dividido por telas e
+> fornecedores; a exportação Excel é carregada somente quando solicitada.
+>
+> Estado validado em 19/08/2026: TypeScript e build aprovados; 17 testes
+> aprovados. Quatro testes PostgreSQL estão implementados, mas não foram executados
+> nesta atualização porque o serviço Docker/PostgreSQL local não estava ativo.
+> Os módulos corporativos secundários ainda mantidos no navegador e as
+> integrações Google/Android continuam sendo pendências, portanto o parecer
+> original de não liberar para produção permanece válido.
+
+> Segundo lote de hardening: módulos simulados foram removidos da superfície v1
+> por feature flags; migrations passaram a usar advisory lock, histórico e
+> checksum; foram adicionados CSRF, health/readiness, logs JSON com redação,
+> Dockerfile não-root, CI com PostgreSQL 17 e scripts reais de backup/restore.
+> ExcelJS foi removido e a auditoria npm passou a registrar zero vulnerabilidades.
+> A liberação ainda depende da execução da suíte PostgreSQL/Docker, infraestrutura
+> externa, restore comprovado, alertas, MFA/e-mail, pentest e homologação formal.
+
 Data da avaliação: 18/08/2026  
 Escopo: código-fonte, arquitetura, autenticação, persistência, integrações, experiência Web/Android e capacidade de operação.
 

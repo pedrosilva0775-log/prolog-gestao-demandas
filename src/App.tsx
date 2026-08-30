@@ -3,31 +3,33 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
-import { AndroidShell } from './components/layout/AndroidShell';
-import { KanbanBoard } from './components/kanban/KanbanBoard';
-import { ListView } from './components/views/ListView';
-import { CalendarView } from './components/views/CalendarView';
-import { TimelineView } from './components/views/TimelineView';
-import { ExecutiveDashboard } from './components/dashboard/ExecutiveDashboard';
-import { ExecutiveReport } from './components/reports/ExecutiveReport';
-import { GoogleWorkspaceHub } from './components/integrations/GoogleWorkspaceHub';
-import { TeamsManagement } from './components/admin/TeamsManagement';
-import { CategoriesConfig } from './components/admin/CategoriesConfig';
-import { AuditLogsView } from './components/admin/AuditLogsView';
 import { AuthGate } from './components/auth/AuthGate';
+import { isViewEnabled } from './config/views';
 
 // Enterprise Roadmap Views
-import { AndroidDistributionView } from './components/views/AndroidDistributionView';
-import { TemplatesAndRecurrenceView } from './components/views/TemplatesAndRecurrenceView';
-import { SlaManagementView } from './components/views/SlaManagementView';
-import { RiskManagementView } from './components/views/RiskManagementView';
-import { ScheduledReportsView } from './components/views/ScheduledReportsView';
-import { ApiWebhooksAutomationsView } from './components/views/ApiWebhooksAutomationsView';
-import { SystemHealthAndBackupView } from './components/views/SystemHealthAndBackupView';
+const viewLoaders = {
+  kanban: () => import('./components/kanban/KanbanBoard'),
+  list: () => import('./components/views/ListView'),
+  calendar: () => import('./components/views/CalendarView'),
+  dashboard: () => import('./components/dashboard/ExecutiveDashboard'),
+  executiveReport: () => import('./components/reports/ExecutiveReport'),
+  teams: () => import('./components/admin/TeamsManagement'),
+  categories: () => import('./components/admin/CategoriesConfig'),
+  audit: () => import('./components/admin/AuditLogsView'),
+};
+
+const KanbanBoard = lazy(() => viewLoaders.kanban().then(module => ({ default: module.KanbanBoard })));
+const ListView = lazy(() => viewLoaders.list().then(module => ({ default: module.ListView })));
+const CalendarView = lazy(() => viewLoaders.calendar().then(module => ({ default: module.CalendarView })));
+const ExecutiveDashboard = lazy(() => viewLoaders.dashboard().then(module => ({ default: module.ExecutiveDashboard })));
+const ExecutiveReport = lazy(() => viewLoaders.executiveReport().then(module => ({ default: module.ExecutiveReport })));
+const TeamsManagement = lazy(() => viewLoaders.teams().then(module => ({ default: module.TeamsManagement })));
+const CategoriesConfig = lazy(() => viewLoaders.categories().then(module => ({ default: module.CategoriesConfig })));
+const AuditLogsView = lazy(() => viewLoaders.audit().then(module => ({ default: module.AuditLogsView })));
 
 // Modals
 import { DemandDetailModal } from './components/modals/DemandDetailModal';
@@ -36,11 +38,12 @@ import { ExportModal } from './components/modals/ExportModal';
 import { NotificationDrawer } from './components/modals/NotificationDrawer';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { CheckCircle2, AlertTriangle, AlertCircle, Info, X } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { MOTION_EASE_OUT } from './components/motion/presets';
 
 const AppContent: React.FC = () => {
   const {
     activeView,
-    deviceMode,
     isCreateModalOpen,
     setIsCreateModalOpen,
     toasts,
@@ -51,6 +54,10 @@ const AppContent: React.FC = () => {
 
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const viewTransitionKey = ['kanban', 'projects', 'improvements', 'tasks', 'my_demands', 'created_by_me', 'team_demands'].includes(activeView)
+    ? 'kanban'
+    : activeView;
 
   // Global Keyboard listener for Command Palette (Ctrl+K or Cmd+K)
   useEffect(() => {
@@ -64,7 +71,51 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Warm all route chunks after the first paint. Navigation then swaps an
+  // already-cached component instead of exposing Suspense's loading fallback.
+  useEffect(() => {
+    const preloadViews = () => { void Promise.allSettled(Object.values(viewLoaders).map(load => load())); };
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(preloadViews, { timeout: 1800 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timeoutId = globalThis.setTimeout(preloadViews, 350);
+    return () => globalThis.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    const closeTopModal = (modal: HTMLElement) => {
+      if (modal.dataset.modalDecision === 'true') return;
+      const buttons = Array.from(modal.querySelectorAll<HTMLButtonElement>('button'));
+      const closeButton = buttons.find(button => button.dataset.modalClose === 'true' || button.getAttribute('aria-label')?.toLowerCase() === 'fechar')
+        || buttons.find(button => ['fechar', 'cancelar'].includes(button.textContent?.trim().toLowerCase() || ''));
+      closeButton?.click();
+    };
+    const visibleModals = () => Array.from(document.querySelectorAll<HTMLElement>('[data-modal-overlay="true"]')).filter(element => element.getClientRects().length > 0);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const modals = visibleModals();
+      const topModal = modals.at(-1);
+      if (topModal && topModal.dataset.modalDecision !== 'true') { event.preventDefault(); closeTopModal(topModal); }
+    };
+    let pressedBackdrop: HTMLElement | null = null;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement;
+      pressedBackdrop = target.dataset.modalOverlay === 'true' ? target : null;
+    };
+    const handleBackdropClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target === pressedBackdrop && target.dataset.modalOverlay === 'true' && target.dataset.modalDecision !== 'true') closeTopModal(target);
+      pressedBackdrop = null;
+    };
+    document.addEventListener('keydown', handleEscape);
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('click', handleBackdropClick);
+    return () => { document.removeEventListener('keydown', handleEscape); document.removeEventListener('pointerdown', handlePointerDown); document.removeEventListener('click', handleBackdropClick); };
+  }, []);
+
   const renderActiveView = () => {
+    if (!isViewEnabled(activeView)) return <KanbanBoard />;
     switch (activeView) {
       case 'kanban':
       case 'projects':
@@ -78,14 +129,10 @@ const AppContent: React.FC = () => {
         return <ListView />;
       case 'calendar':
         return <CalendarView />;
-      case 'timeline':
-        return <TimelineView />;
       case 'dashboard':
         return <ExecutiveDashboard />;
       case 'executive_report':
         return <ExecutiveReport />;
-      case 'google_integrations':
-        return <GoogleWorkspaceHub />;
       case 'teams_management':
         return <TeamsManagement />;
       case 'categories_config':
@@ -93,37 +140,31 @@ const AppContent: React.FC = () => {
       case 'audit_logs':
         return <AuditLogsView />;
       
-      // Enterprise Roadmap Views
-      case 'android':
-        return <AndroidDistributionView />;
-      case 'templates':
-        return <TemplatesAndRecurrenceView />;
-      case 'sla':
-        return <SlaManagementView />;
-      case 'risks':
-        return <RiskManagementView />;
-      case 'reports':
-        return <ScheduledReportsView />;
-      case 'api_webhooks':
-        return <ApiWebhooksAutomationsView />;
-      case 'system_health':
-        return <SystemHealthAndBackupView />;
-
       default:
         return <KanbanBoard />;
     }
   };
 
-  const mainView = renderActiveView();
+  const mainView = (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-slate-500">Carregando módulo…</div>}>
+      {renderActiveView()}
+    </Suspense>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-blue-500 selection:text-white">
       {/* Toast Notification Container */}
       <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-sm pointer-events-none">
+        <AnimatePresence initial={false}>
         {toasts.map((toast) => (
-          <div
+          <motion.div
             key={toast.id}
-            className={`pointer-events-auto p-3 rounded-xl shadow-xl border flex items-start space-x-3 text-xs animate-in slide-in-from-bottom-3 duration-200 ${
+            layout
+            initial={reduceMotion ? false : { opacity: 0, x: 28, y: 8, scale: 0.97 }}
+            animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.97 }}
+            transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 32, mass: 0.8 }}
+            className={`pointer-events-auto p-3 rounded-xl shadow-xl border flex items-start space-x-3 text-xs ${
               toast.type === 'success'
                 ? 'bg-emerald-900 text-white border-emerald-700'
                 : toast.type === 'error'
@@ -149,20 +190,12 @@ const AppContent: React.FC = () => {
             >
               <X className="w-3.5 h-3.5" />
             </button>
-          </div>
+          </motion.div>
         ))}
+        </AnimatePresence>
       </div>
 
-      {/* Mode Switch: Android Simulator vs Desktop Web Application */}
-      {deviceMode === 'android' ? (
-        <AndroidShell
-          onOpenCreateModal={() => setIsCreateModalOpen(true)}
-          onOpenNotifications={() => setIsNotificationsOpen(true)}
-        >
-          {mainView}
-        </AndroidShell>
-      ) : (
-        <div className="flex h-screen overflow-hidden relative">
+      <div className="flex h-screen overflow-hidden relative">
           {/* Backdrop Overlay for collapsible sidebar when open on mobile or drawer */}
           {isSidebarOpen && (
             <div
@@ -183,12 +216,19 @@ const AppContent: React.FC = () => {
               onOpenCreateModal={() => setIsCreateModalOpen(true)}
             />
 
-            <main className="flex-1 min-w-0 overflow-y-auto p-3 sm:p-4 bg-slate-100/60 dark:bg-slate-950">
-              <div className="w-full">{mainView}</div>
+            <main className="relative flex-1 min-w-0 overflow-y-auto p-3 sm:p-4 bg-slate-100/60 dark:bg-slate-950">
+              <motion.div
+                key={viewTransitionKey}
+                initial={reduceMotion ? false : { x: 8 }}
+                animate={{ x: 0 }}
+                transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: MOTION_EASE_OUT }}
+                className="w-full will-change-transform"
+              >
+                {mainView}
+              </motion.div>
             </main>
           </div>
-        </div>
-      )}
+      </div>
 
       {/* Global Modals & Drawers */}
       <DemandDetailModal />

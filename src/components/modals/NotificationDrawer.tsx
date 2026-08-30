@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { formatCalendarDate, isCalendarDateOverdue, parseLocalCalendarDate } from '../../utils/date';
 import {
   X,
   Bell,
@@ -48,7 +49,7 @@ export const NotificationDrawer: React.FC<{
     const status = statuses.find((s) => s.id === d.statusId);
     const isCompleted = status?.category === 'completed';
     const isCancelled = status?.category === 'cancelled';
-    return !isCompleted && !isCancelled && new Date(d.dueDate) < now;
+    return !isCompleted && !isCancelled && isCalendarDateOverdue(d.dueDate, now);
   });
 
   // Blocked demands
@@ -197,7 +198,7 @@ export const NotificationDrawer: React.FC<{
                   <div className="space-y-2">
                     {overdueDemands.map((demand) => {
                       const assignee = users.find((u) => u.id === demand.assigneeId);
-                      const due = new Date(demand.dueDate);
+                      const due = parseLocalCalendarDate(demand.dueDate, true);
                       const diffDays = Math.ceil((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
 
                       return (
@@ -224,7 +225,7 @@ export const NotificationDrawer: React.FC<{
                               <User className="w-3 h-3" />
                               {assignee?.name || 'Não atribuído'}
                             </span>
-                            <span>Prazo: {due.toLocaleDateString('pt-BR')}</span>
+                            <span>Prazo: {formatCalendarDate(demand.dueDate)}</span>
                           </div>
                         </div>
                       );

@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
 import { ApiKeyItem, WebhookSubscription } from '../../types';
 import {
@@ -195,7 +196,7 @@ export const ApiWebhooksAutomationsView: React.FC = () => {
                 <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                   Selecione o Endpoint
                 </label>
-                <select
+                <AppSelect
                   value={selectedEndpoint}
                   onChange={(e) => setSelectedEndpoint(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono"
@@ -204,7 +205,7 @@ export const ApiWebhooksAutomationsView: React.FC = () => {
                   <option value="POST /api/v2/demands">POST /api/v2/demands (Criar Nova Demanda 5W2H)</option>
                   <option value="GET /api/v2/inbox">GET /api/v2/inbox (Listar Caixa de Entrada)</option>
                   <option value="POST /api/v2/inbox/submit">POST /api/v2/inbox/submit (Receber Solicitação Externa)</option>
-                </select>
+                </AppSelect>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/60 space-y-1 font-mono text-[11px]">

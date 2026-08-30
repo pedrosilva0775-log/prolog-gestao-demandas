@@ -3,11 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { AppSelect } from '../common/AppSelect';
+import { MultiSelectDropdown } from '../common/MultiSelectDropdown';
 import { useApp } from '../../context/AppContext';
 import { ExportService } from '../../services/exportService';
 import { DemandReportTemplate } from './DemandReportTemplate';
 import { IconRenderer } from '../common/IconRenderer';
+import { formatCalendarDate, isCalendarDateOverdue } from '../../utils/date';
+import { apiClient } from '../../services/apiClient';
+import { ReportBuilderDrawer } from './ReportBuilderDrawer';
+import { ExecutiveOverviewReportV2 as ExecutiveOverviewReport } from './ExecutiveOverviewReportV2';
+import { MotionButton } from '../motion/MotionButton';
+import { AnimatedNumber } from '../common/AnimatedNumber';
+import { staggerContainer, staggerItem } from '../motion/presets';
+import { createDefaultReportConfiguration, createNativePreset, ReportConfiguration, ReportPreset } from './reportBuilder';
 import {
   FileSpreadsheet,
   Download,
@@ -29,6 +40,7 @@ import {
   LayoutTemplate,
   SlidersHorizontal,
   ChevronDown
+  ,Loader2
 } from 'lucide-react';
 
 export const ExecutiveReport: React.FC = () => {
@@ -48,19 +60,64 @@ export const ExecutiveReport: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'visual_template' | 'detailed_5w2h'>('visual_template');
   const [isExportingPng, setIsExportingPng] = useState(false);
+  const [busyAction, setBusyAction] = useState<'copy' | 'print' | null>(null);
+  const reduceMotion = useReducedMotion();
 
   // Filters for the Demand Report
-  const [selectedUserId, setSelectedUserId] = useState<string>('all');
-  const [selectedTeamId, setSelectedTeamId] = useState<string>('all');
-  const [selectedIssuerId, setSelectedIssuerId] = useState<string>(currentUser.id);
-  const [periodSelection, setPeriodSelection] = useState<string>('current_month');
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  const [clients, setClients] = useState<Array<{ id: string; name: string; company: string; active: boolean }>>([]);
+  const [periodSelection, setPeriodSelection] = useState<string>('current_quarter');
+  const [isBuilderOpen, setIsBuilderOpen] = useState(false);
+  const [reportConfig, setReportConfig] = useState<ReportConfiguration>(() => createDefaultReportConfiguration(statuses, categories));
+  const [reportPresets, setReportPresets] = useState<ReportPreset[]>([]);
+  const configurationBeforeOpen = useRef<ReportConfiguration | null>(null);
 
   const now = new Date();
 
   // Compute selected issuer name & role
-  const issuer = users.find((u) => u.id === selectedIssuerId) || currentUser;
-  const issuerName = issuer.name;
-  const issuerRole = issuer.roleTitle || 'Diretoria / Gestão';
+  useEffect(() => {
+    let active = true;
+    apiClient.clients()
+      .then((items) => {
+        if (active) setClients(items.filter((client: { active: boolean }) => client.active));
+      })
+      .catch(() => {
+        if (active) setClients([]);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!reportConfig.statusIds.length && statuses.length) setReportConfig(createDefaultReportConfiguration(statuses, categories));
+  }, [statuses, categories]);
+
+  useEffect(() => {
+    apiClient.reportPresets().then(setReportPresets).catch(() => setReportPresets([]));
+  }, []);
+
+  const selectedClientLabel = useMemo(() => {
+    if (!selectedClientIds.length) return 'Todos os clientes';
+    return selectedClientIds.map(clientId => {
+      if (clientId === '__internal__') return 'Solicitação interna / sem cliente';
+      const client = clients.find(item => item.id === clientId);
+      return client ? `${client.company} — ${client.name}` : 'Cliente não encontrado';
+    }).join(' e ');
+  }, [clients, selectedClientIds]);
+
+  const selectedUserLabel = useMemo(() => {
+    if (!selectedUserIds.length) return 'Todos os usuários';
+    return users.filter(user => selectedUserIds.includes(user.id)).map(user => user.name).join(' e ');
+  }, [selectedUserIds, users]);
+
+  const selectedTeamLabel = useMemo(() => {
+    if (!selectedTeamIds.length) return 'Todas as equipes';
+    return teams
+      .filter(team => selectedTeamIds.includes(team.id))
+      .map(team => team.name.toLocaleUpperCase('pt-BR'))
+      .join(' E ');
+  }, [selectedTeamIds, teams]);
 
   const periodRange = useMemo(() => {
     const year = now.getFullYear();
@@ -76,6 +133,11 @@ export const ExecutiveReport: React.FC = () => {
     } else if (periodSelection === 'current_quarter') {
       const quarterStart = Math.floor(month / 3) * 3;
       start = new Date(year, quarterStart, 1); end = new Date(year, quarterStart + 3, 1);
+    } else if (periodSelection === 'previous_quarter') {
+      const quarterStart = Math.floor(month / 3) * 3;
+      start = new Date(year, quarterStart - 3, 1); end = new Date(year, quarterStart, 1);
+    } else if (periodSelection === 'current_year') {
+      start = new Date(year, 0, 1); end = new Date(year + 1, 0, 1);
     }
     const format = (date: Date) => date.toLocaleDateString('pt-BR');
     return { start, end, label: start && end ? `${format(start)} a ${format(new Date(end.getTime() - 86400000))}` : 'Todo o histórico' };
@@ -86,27 +148,27 @@ export const ExecutiveReport: React.FC = () => {
   const reportDemands = useMemo(() => {
     return demands.filter((d) => {
       // User filter (assignee or requester)
-      if (selectedUserId !== 'all') {
-        if (d.assigneeId !== selectedUserId && d.requesterId !== selectedUserId) {
-          return false;
-        }
-      }
+      if (selectedUserIds.length && !selectedUserIds.includes(d.assigneeId) && !selectedUserIds.includes(d.requesterId)) return false;
 
       // Team filter
-      if (selectedTeamId !== 'all') {
-        if (d.teamId !== selectedTeamId) {
-          return false;
-        }
+      if (selectedTeamIds.length && !selectedTeamIds.includes(d.teamId)) return false;
+
+      if (selectedClientIds.length) {
+        const matchesClient = d.clientId ? selectedClientIds.includes(d.clientId) : selectedClientIds.includes('__internal__');
+        if (!matchesClient) return false;
       }
 
       if (periodRange.start && periodRange.end) {
-        const createdAt = new Date(d.createdAt);
-        if (createdAt < periodRange.start || createdAt >= periodRange.end) return false;
+        const inRange=(value?:string)=>{if(!value)return false;const date=new Date(value);return date>=periodRange.start!&&date<periodRange.end!;};
+        if (!inRange(d.createdAt) && !inRange(`${d.dueDate}T12:00:00`) && !inRange(d.completedAt)) return false;
       }
+
+      if (!reportConfig.statusIds.includes(d.statusId) || !reportConfig.categoryIds.includes(d.categoryId)) return false;
+      if (reportConfig.priorityIds.length && !reportConfig.priorityIds.includes(d.priorityId)) return false;
 
       return true;
     });
-  }, [demands, selectedUserId, selectedTeamId, periodRange]);
+  }, [demands, selectedUserIds, selectedTeamIds, selectedClientIds, periodRange, reportConfig]);
 
   // Separate metrics for 5W2H view
   const pendingDemands = reportDemands.filter((d) => {
@@ -114,8 +176,8 @@ export const ExecutiveReport: React.FC = () => {
     return s?.category !== 'completed' && s?.category !== 'cancelled';
   });
 
-  const blockedDemands = pendingDemands.filter((d) => d.blocker?.isBlocked);
-  const overdueDemands = pendingDemands.filter((d) => new Date(d.dueDate) < now);
+  const blockedDemands = pendingDemands.filter((d) => d.blocker?.isBlocked || reportConfig.impedimentStatusIds.includes(d.statusId));
+  const overdueDemands = pendingDemands.filter((d) => isCalendarDateOverdue(d.dueDate, now));
   const completedDemands = reportDemands.filter((d) => statuses.find((st) => st.id === d.statusId)?.category === 'completed');
   const completionRate = reportDemands.length ? Math.round((completedDemands.length / reportDemands.length) * 100) : 0;
   const slaCompliance = reportDemands.length ? Math.round((reportDemands.filter((d) => !d.sla?.isBreached).length / reportDemands.length) * 100) : 0;
@@ -128,6 +190,10 @@ export const ExecutiveReport: React.FC = () => {
     return Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
   };
 
+  const openBuilder=()=>{configurationBeforeOpen.current=structuredClone(reportConfig);setIsBuilderOpen(true);};
+  const cancelBuilder=()=>{if(configurationBeforeOpen.current)setReportConfig(configurationBeforeOpen.current);setIsBuilderOpen(false);};
+  const savePreset=async(name:string)=>{const saved=await apiClient.saveReportPreset(name,reportConfig) as ReportPreset;setReportPresets(previous=>[saved,...previous.filter(item=>item.id!==saved.id&&item.name!==saved.name)]);showToast({type:'success',title:'Configuração salva',message:`O preset "${saved.name}" foi salvo no banco de dados.`});};
+
   const handleExportPng = async () => {
     try {
       setIsExportingPng(true);
@@ -137,10 +203,10 @@ export const ExecutiveReport: React.FC = () => {
           : 'executive-board-report-container';
 
       const fileName = `Relatorio_Demandas_${
-        selectedUserId !== 'all'
-          ? users.find((u) => u.id === selectedUserId)?.name.replace(/\s+/g, '_')
-          : selectedTeamId !== 'all'
-          ? teams.find((t) => t.id === selectedTeamId)?.name.replace(/\s+/g, '_')
+        selectedUserIds.length
+          ? selectedUserLabel.replace(/\s+/g, '_')
+          : selectedTeamIds.length
+          ? selectedTeamLabel.replace(/\s+/g, '_')
           : 'Geral'
       }_${new Date().toISOString().slice(0, 10)}`;
 
@@ -162,10 +228,12 @@ export const ExecutiveReport: React.FC = () => {
   };
 
   const handlePrint = () => {
-    window.print();
+    setBusyAction('print');
+    window.setTimeout(() => { window.print(); setBusyAction(null); }, 180);
   };
 
-  const handleCopySummaryText = () => {
+  const handleCopySummaryText = async () => {
+    setBusyAction('copy');
     const completedCount = reportDemands.filter((d) => {
       const s = statuses.find((st) => st.id === d.statusId);
       return s?.category === 'completed';
@@ -174,12 +242,12 @@ export const ExecutiveReport: React.FC = () => {
     const progress = reportDemands.length > 0 ? Math.round((completedCount / reportDemands.length) * 100) : 0;
 
     let text = `📊 RELATÓRIO DE DEMANDAS - ${periodText.toUpperCase()}\n`;
-    text += `Demandas repassadas por: ${issuerName} — ${issuerRole}\n`;
+    text += `Cliente solicitante: ${selectedClientLabel}\n`;
     text += `Alvo: ${
-      selectedUserId !== 'all'
-        ? `Usuário ${users.find((u) => u.id === selectedUserId)?.name}`
-        : selectedTeamId !== 'all'
-        ? `Equipe ${teams.find((t) => t.id === selectedTeamId)?.name}`
+      selectedUserIds.length
+        ? `Usuários ${selectedUserLabel}`
+        : selectedTeamIds.length
+        ? `Equipes ${selectedTeamLabel}`
         : 'Visão Geral Consolidada'
     }\n\n`;
     text += `📈 INDICADORES GERAIS:\n`;
@@ -191,16 +259,17 @@ export const ExecutiveReport: React.FC = () => {
     text += `⏳ DEMANDAS PENDENTES (${pendingCount}):\n`;
     pendingDemands.slice(0, 10).forEach((d, idx) => {
       const assignee = users.find((u) => u.id === d.assigneeId)?.name || 'Não atribuído';
-      const due = new Date(d.dueDate).toLocaleDateString('pt-BR');
+      const due = formatCalendarDate(d.dueDate);
       text += `${idx + 1}. [${d.code}] ${d.title} | Resp: ${assignee} | Prazo: ${due}\n`;
     });
 
-    navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(text);
     showToast({
       type: 'success',
       title: 'Resumo Copiado',
       message: 'Texto estruturado do relatório copiado para a área de transferência.'
     });
+    setBusyAction(null);
   };
 
   return (
@@ -252,35 +321,37 @@ export const ExecutiveReport: React.FC = () => {
             </div>
 
             {/* Copy text */}
-            <button
-              onClick={handleCopySummaryText}
+              <MotionButton
+                onClick={() => void handleCopySummaryText()}
+                disabled={busyAction === 'copy'}
               className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 flex items-center space-x-1.5 transition-colors"
               title="Copiar texto resumido para WhatsApp ou E-mail"
             >
-              <Copy className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Copiar Texto</span>
-            </button>
+                {busyAction === 'copy' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Copy className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">{busyAction === 'copy' ? 'Copiando…' : 'Copiar Texto'}</span>
+              </MotionButton>
 
             {/* Print / PDF */}
-            <button
+            <MotionButton
               onClick={handlePrint}
+              disabled={busyAction === 'print'}
               className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 flex items-center space-x-1.5 transition-colors"
               title="Imprimir ou Salvar em PDF"
             >
-              <Printer className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Imprimir / PDF</span>
-            </button>
+              {busyAction === 'print' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{busyAction === 'print' ? 'Preparando…' : 'Imprimir / PDF'}</span>
+            </MotionButton>
 
             {/* Export PNG */}
-            <button
+            <MotionButton
               onClick={handleExportPng}
               disabled={isExportingPng}
               className="px-3 py-2 rounded-xl text-xs font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 flex items-center space-x-1.5 transition-colors shadow-xs"
               title="Baixar imagem PNG de alta resolução"
             >
-              <ImageIcon className="w-3.5 h-3.5" />
+              {isExportingPng ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
               <span>{isExportingPng ? 'Gerando...' : 'Exportar Imagem'}</span>
-            </button>
+            </MotionButton>
 
             {/* Export Excel */}
             <button
@@ -294,33 +365,24 @@ export const ExecutiveReport: React.FC = () => {
         </div>
 
         {/* Dynamic Filter Controls Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
           {/* 1. Filter by User */}
           <div className="space-y-1">
             <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1">
               <UserCheck className="w-3.5 h-3.5 text-blue-600" />
               <span>Filtrar por Usuário:</span>
             </label>
-            <select
-              value={selectedUserId}
-              onChange={(e) => {
-                setSelectedUserId(e.target.value);
-                if (e.target.value !== 'all') setSelectedTeamId('all');
-              }}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 font-medium focus:ring-1 focus:ring-blue-500 cursor-pointer"
-            >
-              <option value="all">Todos os Usuários ({demands.length} demandas)</option>
-              {users.map((u) => {
-                const count = demands.filter(
-                  (d) => d.assigneeId === u.id || d.requesterId === u.id
-                ).length;
-                return (
-                  <option key={u.id} value={u.id}>
-                    {u.name} — {u.roleTitle} ({count} demandas)
-                  </option>
-                );
-              })}
-            </select>
+            <MultiSelectDropdown
+              values={selectedUserIds}
+              onChange={setSelectedUserIds}
+              allLabel={`Todos os Usuários (${demands.length} demandas)`}
+              ariaLabel="Filtrar por usuários"
+              options={users.map(user => ({
+                value: user.id,
+                label: user.name,
+                description: `${user.roleTitle} · ${demands.filter(demand => demand.assigneeId === user.id || demand.requesterId === user.id).length} demandas`,
+              }))}
+            />
           </div>
 
           {/* 2. Filter by Team */}
@@ -329,43 +391,43 @@ export const ExecutiveReport: React.FC = () => {
               <Users className="w-3.5 h-3.5 text-blue-600" />
               <span>Filtrar por Equipe (Squad):</span>
             </label>
-            <select
-              value={selectedTeamId}
-              onChange={(e) => {
-                setSelectedTeamId(e.target.value);
-                if (e.target.value !== 'all') setSelectedUserId('all');
-              }}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 font-medium focus:ring-1 focus:ring-blue-500 cursor-pointer"
-            >
-              <option value="all">Todas as Equipes</option>
-              {teams.map((t) => {
-                const count = demands.filter((d) => d.teamId === t.id).length;
-                return (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({count} demandas)
-                  </option>
-                );
-              })}
-            </select>
+            <MultiSelectDropdown
+              values={selectedTeamIds}
+              onChange={setSelectedTeamIds}
+              allLabel="Todas as Equipes"
+              ariaLabel="Filtrar por equipes"
+              options={teams.map(team => ({
+                value: team.id,
+                label: team.name,
+                description: `${demands.filter(demand => demand.teamId === team.id).length} demandas`,
+              }))}
+            />
           </div>
 
-          {/* 3. Demandas repassadas por */}
+          {/* 3. Cliente solicitante */}
           <div className="space-y-1">
             <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1">
               <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" />
-              <span>Demandas repassadas por:</span>
+              <span>Cliente solicitante:</span>
             </label>
-            <select
-              value={selectedIssuerId}
-              onChange={(e) => setSelectedIssuerId(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 font-medium focus:ring-1 focus:ring-blue-500 cursor-pointer"
-            >
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} — {u.roleTitle}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              values={selectedClientIds}
+              onChange={setSelectedClientIds}
+              allLabel="Todos os clientes"
+              ariaLabel="Filtrar por clientes solicitantes"
+              options={[
+                {
+                  value: '__internal__',
+                  label: 'Solicitação interna / sem cliente',
+                  description: `${demands.filter(demand => !demand.clientId).length} demandas`,
+                },
+                ...clients.map(client => ({
+                  value: client.id,
+                  label: client.company,
+                  description: `${client.name} · ${demands.filter(demand => demand.clientId === client.id).length} demandas`,
+                })),
+              ]}
+            />
           </div>
 
           {/* 4. Period Filter */}
@@ -374,17 +436,24 @@ export const ExecutiveReport: React.FC = () => {
               <Calendar className="w-3.5 h-3.5 text-blue-600" />
               <span>Período do Relatório:</span>
             </label>
-            <select
+            <AppSelect
               value={periodSelection}
               onChange={(e) => setPeriodSelection(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 font-medium focus:ring-1 focus:ring-blue-500 cursor-pointer"
             >
+              <option value="current_quarter">Trimestre atual</option>
+              <option value="previous_quarter">Trimestre anterior</option>
+              <option value="current_year">Ano atual</option>
               <option value="current_month">Mês atual</option>
               <option value="last_month">Mês anterior</option>
               <option value="last_30_days">Últimos 30 Dias</option>
-              <option value="current_quarter">Trimestre atual</option>
               <option value="all_time">Todo o Histórico</option>
-            </select>
+            </AppSelect>
+          </div>
+          <div className="flex items-end">
+            <button onClick={openBuilder} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2 font-bold text-white shadow-sm hover:bg-blue-700">
+              <SlidersHorizontal className="h-4 w-4"/><span>Personalizar Relatório</span>
+            </button>
           </div>
         </div>
       </div>
@@ -393,64 +462,63 @@ export const ExecutiveReport: React.FC = () => {
       {activeTab === 'visual_template' ? (
         /* Visual Format from User's Image - Compact Fit */
         <div className="w-full flex justify-center py-2">
-          <DemandReportTemplate
+          <ExecutiveOverviewReport
             id="demand-report-printable-card"
             demands={reportDemands}
-            users={users}
-            teams={teams}
             categories={categories}
-            priorities={priorities}
             statuses={statuses}
-            issuerName={issuerName}
-            issuerRole={issuerRole}
+            clientFilterText={selectedClientLabel}
+            teamFilterText={selectedTeamLabel}
             periodText={periodText}
-            generatedDateText={now.toLocaleDateString('pt-BR')}
+            configuration={reportConfig}
+            periodStart={periodRange.start}
+            onConfigure={openBuilder}
           />
         </div>
       ) : (
         /* 5W2H Deep Dive Strategic Diagnostic */
         <div id="executive-board-report-container" className="space-y-6">
           {/* Quick Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+          {reportConfig.blocks.includes('indicators') && <motion.div variants={reduceMotion ? undefined : staggerContainer(0.04, 0.08)} initial={reduceMotion ? false : 'hidden'} animate="visible" className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
               <p className="text-[11px] font-bold text-slate-400 uppercase">Taxa de Conclusão</p>
               <p className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                {completionRate}%
+                <AnimatedNumber value={completionRate} suffix="%" />
               </p>
               <p className="text-[10px] text-slate-500 mt-0.5">{completedDemands.length} de {reportDemands.length} concluídas</p>
-            </div>
+            </motion.div>
 
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-red-200 dark:border-red-900/60 shadow-xs bg-red-50/20">
+            <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-red-200 dark:border-red-900/60 shadow-xs bg-red-50/20">
               <p className="text-[11px] font-bold text-red-500 uppercase">Exceções Operacionais</p>
               <p className="text-2xl font-black text-red-600 dark:text-red-400 mt-1">
-                {blockedDemands.length + overdueDemands.length}
+                <AnimatedNumber value={blockedDemands.length + overdueDemands.length} />
               </p>
               <p className="text-[10px] text-red-600 dark:text-red-400 font-semibold mt-0.5">
                 {blockedDemands.length} bloqueadas · {overdueDemands.length} atrasadas
               </p>
-            </div>
+            </motion.div>
 
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 shadow-xs bg-amber-50/20">
+            <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 shadow-xs bg-amber-50/20">
               <p className="text-[11px] font-bold text-amber-500 uppercase">Lead Time Médio</p>
               <p className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
-                {averageLeadTime} dias
+                <AnimatedNumber value={averageLeadTime} suffix=" dias" />
               </p>
               <p className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
                 Da criação à conclusão
               </p>
-            </div>
+            </motion.div>
 
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
               <p className="text-[11px] font-bold text-slate-400 uppercase">Conformidade SLA</p>
               <p className="text-2xl font-black text-purple-600 dark:text-purple-400 mt-1">
-                {slaCompliance}%
+                <AnimatedNumber value={slaCompliance} suffix="%" />
               </p>
               <p className="text-[10px] text-slate-500 mt-0.5">Demandas sem violação registrada</p>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>}
 
           {/* 5W2H Cards */}
-          <div className="space-y-4">
+          {(reportConfig.blocks.includes('ongoing') || reportConfig.blocks.includes('blocked') || reportConfig.blocks.includes('validation')) && <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center space-x-2">
                 <Info className="w-4 h-4 text-blue-600" />
@@ -468,7 +536,7 @@ export const ExecutiveReport: React.FC = () => {
                 const priority = priorities.find((p) => p.id === demand.priorityId);
                 const assignee = users.find((u) => u.id === demand.assigneeId);
                 const team = teams.find((t) => t.id === demand.teamId);
-                const isOverdue = new Date(demand.dueDate) < now;
+                const isOverdue = isCalendarDateOverdue(demand.dueDate, now);
 
                 return (
                   <div
@@ -559,7 +627,7 @@ export const ExecutiveReport: React.FC = () => {
                               : 'text-slate-900 dark:text-slate-100'
                           }`}
                         >
-                          {new Date(demand.dueDate).toLocaleDateString('pt-BR')}
+                          {formatCalendarDate(demand.dueDate)}
                         </p>
                         <p className="text-[10px] text-slate-400">
                           {isOverdue ? '⚠️ Prazo vencido' : 'No prazo'}
@@ -576,9 +644,10 @@ export const ExecutiveReport: React.FC = () => {
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
       )}
+      <ReportBuilderDrawer open={isBuilderOpen} config={reportConfig} demands={reportDemands} statuses={statuses} categories={categories} priorities={priorities} users={users} teams={teams} clients={clients} presets={reportPresets} onChange={setReportConfig} onCancel={cancelBuilder} onClose={()=>setIsBuilderOpen(false)} onRestore={()=>setReportConfig(createDefaultReportConfiguration(statuses,categories))} onSave={savePreset} onLoad={preset=>setReportConfig({...preset.configuration,showRisksAndDecisions:Boolean(preset.configuration.showRisksAndDecisions),riskItems:preset.configuration.riskItems||[],showImpactDeliveries:preset.configuration.showImpactDeliveries!==false,impactItems:preset.configuration.impactItems||[],showMilestones:preset.configuration.showMilestones!==false,milestoneItems:preset.configuration.milestoneItems||[]})} onNativePreset={name=>setReportConfig(createNativePreset(name,statuses,categories))}/>
     </div>
   );
 };

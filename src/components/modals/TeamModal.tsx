@@ -4,8 +4,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { AppSelect } from '../common/AppSelect';
 import { Team, User } from '../../types';
 import { useApp } from '../../context/AppContext';
+import { UserAvatar } from '../common/UserAvatar';
 import {
   X,
   Users,
@@ -17,6 +19,7 @@ import {
   Ban,
   UserCheck,
   Building
+  ,Search
 } from 'lucide-react';
 
 interface TeamModalProps {
@@ -63,6 +66,8 @@ export const TeamModal: React.FC<TeamModalProps> = ({
   const [selectedColor, setSelectedColor] = useState(TEAM_COLORS[0].hex);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [active, setActive] = useState(true);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (teamToEdit) {
@@ -79,9 +84,10 @@ export const TeamModal: React.FC<TeamModalProps> = ({
       setDepartment(DEPARTMENTS_LIST[0]);
       setLeaderId(users[0]?.id || '');
       setSelectedColor(TEAM_COLORS[0].hex);
-      setMemberIds(users.slice(0, 3).map(u => u.id));
+      setMemberIds([]);
       setActive(true);
     }
+    setMemberSearch('');
   }, [teamToEdit, isOpen, users]);
 
   if (!isOpen) return null;
@@ -92,7 +98,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!name.trim()) {
@@ -114,14 +120,18 @@ export const TeamModal: React.FC<TeamModalProps> = ({
       active
     };
 
-    if (teamToEdit) {
-      updateTeam(teamToEdit.id, payload);
-    } else {
-      createTeam(payload);
-    }
-
-    onClose();
+    setSaving(true);
+    try {
+      if (teamToEdit) await updateTeam(teamToEdit.id, payload);
+      else await createTeam(payload);
+      onClose();
+    } catch (error) {
+      showToast({ type: 'error', title: 'Equipe não criada', message: error instanceof Error ? error.message : 'Falha ao salvar a equipe.' });
+    } finally { setSaving(false); }
   };
+
+  const normalizedMemberSearch = memberSearch.trim().toLocaleLowerCase('pt-BR');
+  const selectableUsers = users.filter(user => user.active && (!normalizedMemberSearch || [user.name, user.email, user.roleTitle, user.department].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(normalizedMemberSearch))));
 
   const handleDelete = () => {
     if (!teamToEdit) return;
@@ -142,7 +152,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
+    <div data-modal-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -190,7 +200,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                 Departamento / Área
               </label>
-              <select
+              <AppSelect
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -200,14 +210,14 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                     {dept}
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                 Líder da Equipe
               </label>
-              <select
+              <AppSelect
                 value={leaderId}
                 onChange={(e) => setLeaderId(e.target.value)}
                 className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -217,7 +227,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                     {u.name} ({u.roleTitle || u.role})
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
           </div>
 
@@ -264,15 +274,17 @@ export const TeamModal: React.FC<TeamModalProps> = ({
               </label>
               <button
                 type="button"
-                onClick={() => setMemberIds(users.map((u) => u.id))}
+                onClick={() => setMemberIds(previous => [...new Set([...previous, ...selectableUsers.map(user => user.id)])])}
                 className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold"
               >
                 Selecionar Todos
               </button>
             </div>
 
+            <div className="relative mb-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400"/><input type="search" value={memberSearch} onChange={event => setMemberSearch(event.target.value)} placeholder="Pesquisar por nome, e-mail, cargo ou departamento" className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-900"/></div>
+
             <div className="max-h-44 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800/60 p-1 bg-slate-50/50 dark:bg-slate-800/30">
-              {users.map((user) => {
+              {selectableUsers.map((user) => {
                 const isSelected = memberIds.includes(user.id);
                 return (
                   <div
@@ -285,11 +297,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <img
-                        src={user.avatar}
-                        alt={user.name}
-                        className="w-6 h-6 rounded-full object-cover shrink-0"
-                      />
+                      <UserAvatar name={user.name} src={user.avatar} className="w-6 h-6 rounded-full text-[9px]" />
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
                           {user.name}
@@ -308,7 +316,8 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                     />
                   </div>
                 );
-              })}
+                })}
+              {selectableUsers.length === 0 && <p className="p-4 text-center text-xs text-slate-500">Nenhum usuário encontrado.</p>}
             </div>
           </div>
 
@@ -338,10 +347,11 @@ export const TeamModal: React.FC<TeamModalProps> = ({
 
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-md shadow-blue-500/20 flex items-center gap-1.5"
+                disabled={saving}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-md shadow-blue-500/20 flex items-center gap-1.5 disabled:opacity-60"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{teamToEdit ? 'Salvar Alterações' : 'Criar Equipe'}</span>
+                <span>{saving ? 'Salvando...' : teamToEdit ? 'Salvar Alterações' : 'Criar Equipe'}</span>
               </button>
             </div>
           </div>

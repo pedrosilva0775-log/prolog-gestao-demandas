@@ -6,7 +6,8 @@
 export type UserRole = 'admin' | 'gestor' | 'colaborador' | 'diretoria';
 
 export type RbacModule =
-  | 'demands'          // Gestão Geral de Demandas (Kanban, Lista, Gantt, Calendário)
+  | 'comments'
+  | 'demands'          // Gestão Geral de Demandas (Kanban, Lista e Calendário)
   | 'projects'         // Atividades do tipo Projeto Estratégico
   | 'improvements'     // Atividades do tipo Melhoria
   | 'tasks'            // Atividades do tipo Tarefa Operacional
@@ -140,6 +141,7 @@ export interface ChecklistItem {
 
 export interface BlockerInfo {
   isBlocked: boolean;
+  kind?: 'blocker' | 'impediment';
   reason?: string;
   impact?: 'Baixo' | 'Médio' | 'Alto' | 'Crítico';
   blockedAt?: string;
@@ -147,6 +149,11 @@ export interface BlockerInfo {
   actionNeeded?: string;
   requiresBoardIntervention?: boolean;
   resolvedAt?: string;
+  createRelatedTask?: boolean;
+  responsibleTeamId?: string;
+  linkedDemandId?: string;
+  previousStatusId?: string;
+  resolvedByDemandId?: string;
 }
 
 export interface DeadlineExtension {
@@ -178,6 +185,8 @@ export interface Comment {
   userAvatar: string;
   content: string;
   createdAt: string;
+  editedAt?: string;
+  editedByUserId?: string;
   mentions?: string[];
   attachments?: Attachment[];
   isDecision?: boolean; // Marcação formal de decisão
@@ -257,7 +266,7 @@ export interface SlaTracking {
   escalationLevel: 'none' | 'manager' | 'board';
 }
 
-// 6. Gantt Dependency Link
+// 6. Demand Dependency Link
 export type DependencyType = 'FS' | 'SS' | 'FF' | 'SF'; // Finish-to-Start, Start-to-Start, Finish-to-Finish, Start-to-Finish
 
 export interface DemandDependency {
@@ -337,7 +346,7 @@ export interface Demand {
   // SLA Engine (4)
   sla: SlaTracking;
   
-  // Dependencies & Gantt (6)
+  // Dependencies and planning (6)
   advancedDependencies: DemandDependency[];
   dependencies: string[]; // Legacy back-compatibility
   
@@ -784,6 +793,7 @@ export interface FilterState {
   teamIds: string[];
   assigneeIds: string[];
   requesterIds: string[];
+  clientIds: string[];
   tags: string[];
   onlyMyDemands: boolean;
   onlyCreatedByMe: boolean;
@@ -804,8 +814,6 @@ export type ActiveView =
   | 'kanban'
   | 'list'
   | 'calendar'
-  | 'timeline'
-  | 'gantt'
   | 'dashboard'
   | 'executive_report'
   | 'my_demands'

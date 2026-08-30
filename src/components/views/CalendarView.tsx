@@ -7,6 +7,8 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Demand } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
+import { parseLocalCalendarDate } from '../../utils/date';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ChevronLeft,
   ChevronRight,
@@ -17,8 +19,9 @@ import {
 } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
+  const reduceMotion = useReducedMotion();
   const { filteredDemands, setSelectedDemand, setIsCreateModalOpen, categories, statuses } = useApp();
-  const [currentDate, setCurrentDate] = useState<Date>(new Date(2026, 7, 1)); // August 2026
+  const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth(); // 0-indexed (7 is August)
@@ -38,12 +41,12 @@ export const CalendarView: React.FC = () => {
     setCurrentDate(new Date(year, month + 1, 1));
   };
   const handleToday = () => {
-    setCurrentDate(new Date(2026, 7, 16));
+    setCurrentDate(new Date());
   };
 
   const getDemandsForDay = (day: number) => {
     return filteredDemands.filter(d => {
-      const due = new Date(d.dueDate);
+      const due = parseLocalCalendarDate(d.dueDate);
       return due.getFullYear() === year && due.getMonth() === month && due.getDate() === day;
     });
   };
@@ -100,14 +103,16 @@ export const CalendarView: React.FC = () => {
         </div>
 
         {/* Days grid */}
-        <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={`${year}-${month}`} initial={reduceMotion ? false : { opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? undefined : { opacity: 0, x: -12 }} transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }} className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-slate-100 dark:divide-slate-800 text-xs">
           {blankDays.map((_, i) => (
             <div key={`blank-${i}`} className="min-h-[110px] bg-slate-50/50 dark:bg-slate-950/20 p-2" />
           ))}
 
           {daysArray.map((day) => {
             const dayDemands = getDemandsForDay(day);
-            const isToday = day === 16 && month === 7 && year === 2026;
+            const today = new Date();
+            const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
 
             return (
               <div
@@ -162,7 +167,8 @@ export const CalendarView: React.FC = () => {
               </div>
             );
           })}
-        </div>
+        </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );

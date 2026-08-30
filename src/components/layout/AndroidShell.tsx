@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ActiveView } from '../../types';
+import { UserAvatar } from '../common/UserAvatar';
 import {
   Wifi,
   BatteryCharging,
@@ -147,11 +148,7 @@ export const AndroidShell: React.FC<{
                 )}
               </button>
 
-              <img
-                src={currentUser.avatar}
-                alt={currentUser.name}
-                className="w-7 h-7 rounded-full object-cover ring-1 ring-blue-500 ml-1"
-              />
+              <UserAvatar name={currentUser.name} src={currentUser.avatar} className="w-7 h-7 rounded-full ring-1 ring-blue-500 ml-1 text-[9px]" />
             </div>
           </div>
 
@@ -237,11 +234,7 @@ export const AndroidShell: React.FC<{
               <div className="relative w-4/5 max-w-[280px] bg-white dark:bg-slate-900 h-full shadow-2xl p-4 flex flex-col animate-in slide-in-from-left duration-200">
                 <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="flex items-center space-x-2">
-                    <img
-                      src={currentUser.avatar}
-                      alt={currentUser.name}
-                      className="w-10 h-10 rounded-full object-cover ring-2 ring-blue-500"
-                    />
+                    <UserAvatar name={currentUser.name} src={currentUser.avatar} className="w-10 h-10 rounded-full ring-2 ring-blue-500 text-xs" />
                     <div>
                       <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
                         {currentUser.name}
@@ -269,7 +262,6 @@ export const AndroidShell: React.FC<{
                     { id: 'dashboard' as ActiveView, label: 'Dashboard Executivo' },
                     { id: 'executive_report' as ActiveView, label: 'Relatório Diretoria' },
                     { id: 'calendar' as ActiveView, label: 'Calendário de Prazos' },
-                    { id: 'timeline' as ActiveView, label: 'Linha do Tempo' },
                     { id: 'projects' as ActiveView, label: '👑 Projetos' },
                     { id: 'improvements' as ActiveView, label: '📓 Melhorias' },
                     { id: 'tasks' as ActiveView, label: '⚙️ Tarefas' },

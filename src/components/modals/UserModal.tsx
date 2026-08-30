@@ -6,6 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole, UserCustomPermissions } from '../../types';
 import { useApp } from '../../context/AppContext';
+import { csrfHeaders } from '../../services/csrf';
+import { UserAvatar } from '../common/UserAvatar';
 import {
   X,
   UserPlus,
@@ -24,9 +26,7 @@ import {
   ChevronUp,
   Plus,
   MinusCircle,
-  PlusCircle,
-  Link2,
-  Copy
+  PlusCircle
 } from 'lucide-react';
 
 interface UserModalProps {
@@ -62,7 +62,6 @@ export const UserModal: React.FC<UserModalProps> = ({
   const [initialPassword, setInitialPassword] = useState('');
   const [confirmInitialPassword, setConfirmInitialPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [invitationLink, setInvitationLink] = useState('');
 
   // Custom Granular Permissions
   const [isCustomPermissionsOpen, setIsCustomPermissionsOpen] = useState(false);
@@ -84,7 +83,6 @@ export const UserModal: React.FC<UserModalProps> = ({
       setRevokedOverrides(userToEdit.customPermissions?.revoked || []);
       setInitialPassword('');
       setConfirmInitialPassword('');
-      setInvitationLink('');
     } else {
       setName('');
       setEmail('');
@@ -103,20 +101,6 @@ export const UserModal: React.FC<UserModalProps> = ({
   }, [userToEdit, isOpen, teams]);
 
   if (!isOpen) return null;
-
-  if (false && !userToEdit) {
-    const createInvitation = async (event: React.FormEvent) => {
-      event.preventDefault(); setIsSubmitting(true);
-      try {
-        const response = await fetch('/api/admin/invitations', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), email: email.trim() }) });
-        const data = await response.json(); if (!response.ok) throw new Error(data.message);
-        setInvitationLink(data.link);
-        showToast({ type: 'success', title: 'Convite gerado', message: 'Copie o link e envie ao novo usuário. Ele expira em 7 dias.' });
-      } catch (error) { showToast({ type: 'error', title: 'Convite não gerado', message: error instanceof Error ? error.message : 'Tente novamente.' }); }
-      finally { setIsSubmitting(false); }
-    };
-    return <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"><div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden"><header className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between"><div className="flex gap-3"><span className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950 text-blue-600 grid place-items-center"><Link2 className="w-5 h-5" /></span><div><h3 className="font-black text-slate-900 dark:text-white">Convidar novo usuário</h3><p className="text-xs text-slate-500">Gere um link seguro para solicitação de acesso</p></div></div><button onClick={onClose} className="p-2 text-slate-400"><X className="w-5 h-5" /></button></header><form onSubmit={createInvitation} className="p-6 space-y-4"><div className="rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 p-4 text-xs text-blue-900 dark:text-blue-200">Informe apenas nome e e-mail. O convidado preencherá cargo, setor, filial, equipe e senha. O perfil de acesso será escolhido na aprovação.</div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Nome completo<input required value={name} onChange={event => { setName(event.target.value); setInvitationLink(''); }} className="mt-1.5 w-full h-11 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800" /></label><label className="block text-xs font-bold text-slate-700 dark:text-slate-300">E-mail<input required type="email" value={email} onChange={event => { setEmail(event.target.value); setInvitationLink(''); }} className="mt-1.5 w-full h-11 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800" /></label>{invitationLink && <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 p-4"><p className="text-xs font-bold text-emerald-800 dark:text-emerald-300 mb-2">Link pronto · validade de 7 dias</p><div className="flex gap-2"><input readOnly value={invitationLink} className="min-w-0 flex-1 h-10 px-3 rounded-xl border border-emerald-200 bg-white text-xs" /><button type="button" onClick={() => { navigator.clipboard.writeText(invitationLink); showToast({ type: 'success', title: 'Link copiado', message: 'Agora envie ao usuário convidado.' }); }} className="px-3 rounded-xl bg-emerald-600 text-white"><Copy className="w-4 h-4" /></button></div></div>}<div className="flex justify-end gap-2 pt-2"><button type="button" onClick={onClose} className="px-4 py-2.5 text-xs font-bold text-slate-500">Fechar</button><button disabled={isSubmitting || Boolean(invitationLink)} className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold disabled:opacity-50">{isSubmitting ? 'Gerando...' : invitationLink ? 'Convite gerado' : 'Gerar link de acesso'}</button></div></form></div></div>;
-  }
 
   const handleToggleTeam = (teamId: string) => {
     setTeamIds((prev) =>
@@ -182,8 +166,8 @@ export const UserModal: React.FC<UserModalProps> = ({
       return;
     }
 
-    if (needsAccessSetup && (initialPassword.length < 8 || !/[A-Za-z]/.test(initialPassword) || !/\d/.test(initialPassword))) {
-      showToast({ type: 'warning', title: 'Senha inicial inválida', message: 'Use ao menos 8 caracteres, incluindo letras e números.' });
+    if (needsAccessSetup && (initialPassword.length < 12 || !/[A-Za-z]/.test(initialPassword) || !/\d/.test(initialPassword))) {
+      showToast({ type: 'warning', title: 'Senha inicial inválida', message: 'Use ao menos 12 caracteres, incluindo letras e números.' });
       return;
     }
     if (needsAccessSetup && initialPassword !== confirmInitialPassword) {
@@ -211,18 +195,21 @@ export const UserModal: React.FC<UserModalProps> = ({
     };
 
     if (userToEdit && !needsAccessSetup) {
-      updateUser(userToEdit.id, payload);
+      setIsSubmitting(true);
+      try { await updateUser(userToEdit.id, payload); }
+      catch (error) { showToast({ type: 'error', title: 'Usuário não atualizado', message: error instanceof Error ? error.message : 'Falha ao salvar o usuário.' }); setIsSubmitting(false); return; }
+      setIsSubmitting(false);
     } else {
       setIsSubmitting(true);
       const userId = userToEdit?.id || `usr-${Date.now()}`;
       try {
         const response = await fetch('/api/admin/users', {
-          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: userId, name: payload.name, email: payload.email, password: initialPassword, role: payload.role, roleTitle: payload.roleTitle, department: payload.department })
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({ name: payload.name, email: payload.email, password: initialPassword, role: payload.role, roleTitle: payload.roleTitle, department: payload.department, phone: payload.phone, avatar: payload.avatar, teamIds: payload.teamIds })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || 'Não foi possível criar a conta.');
-        if (userToEdit) updateUser(userId, payload); else createUser(payload, userId);
+        if (userToEdit) await updateUser(data.id, payload); else createUser(payload, data.id);
         showToast({ type: 'success', title: 'Usuário cadastrado', message: `${payload.name} deverá alterar a senha provisória no primeiro acesso.` });
       } catch (error) {
         showToast({ type: 'error', title: 'Cadastro não concluído', message: error instanceof Error ? error.message : 'Tente novamente.' });
@@ -262,11 +249,11 @@ export const UserModal: React.FC<UserModalProps> = ({
     onClose();
   };
 
-  const handleToggleActive = () => {
+  const handleToggleActive = async () => {
     if (!userToEdit) return;
     const nextActive = !active;
-    setActive(nextActive);
-    updateUser(userToEdit.id, { active: nextActive });
+    try { await updateUser(userToEdit.id, { active: nextActive }); setActive(nextActive); }
+    catch (error) { showToast({ type: 'error', title: 'Usuário não atualizado', message: error instanceof Error ? error.message : 'Falha ao salvar.' }); return; }
     showToast({
       type: 'info',
       title: nextActive ? 'Usuário Reativado' : 'Usuário Desativado',
@@ -275,7 +262,7 @@ export const UserModal: React.FC<UserModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
+    <div data-modal-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -304,13 +291,7 @@ export const UserModal: React.FC<UserModalProps> = ({
         <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
           {/* Avatar Selector Preview */}
           <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-4">
-            {avatar ? (
-              <img src={avatar} alt="Foto de perfil" className="w-14 h-14 rounded-full object-cover ring-2 ring-blue-500 shrink-0" />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 ring-2 ring-blue-500 flex items-center justify-center font-bold text-lg shrink-0">
-                {(name.trim()[0] || '?').toUpperCase()}
-              </div>
-            )}
+            <UserAvatar name={name} src={avatar} className="w-14 h-14 rounded-full ring-2 ring-blue-500 text-lg" />
             <div className="flex-1 min-w-0">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1">
                 Foto de Perfil (Avatar)
@@ -367,10 +348,10 @@ export const UserModal: React.FC<UserModalProps> = ({
             <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 p-4">
               <div className="mb-3"><p className="text-xs font-bold text-amber-900 dark:text-amber-200">Senha provisória</p><p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">O usuário deverá criar uma nova senha obrigatoriamente no primeiro acesso.</p></div>
               <div className="grid sm:grid-cols-2 gap-3">
-                <input required type="password" minLength={8} autoComplete="new-password" value={initialPassword} onChange={e => setInitialPassword(e.target.value)} placeholder="Senha inicial" className="w-full px-3 py-2 text-sm rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900" />
-                <input required type="password" minLength={8} autoComplete="new-password" value={confirmInitialPassword} onChange={e => setConfirmInitialPassword(e.target.value)} placeholder="Confirmar senha inicial" className="w-full px-3 py-2 text-sm rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900" />
+                <input required type="password" minLength={12} autoComplete="new-password" value={initialPassword} onChange={e => setInitialPassword(e.target.value)} placeholder="Senha inicial" className="w-full px-3 py-2 text-sm rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900" />
+                <input required type="password" minLength={12} autoComplete="new-password" value={confirmInitialPassword} onChange={e => setConfirmInitialPassword(e.target.value)} placeholder="Confirmar senha inicial" className="w-full px-3 py-2 text-sm rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900" />
               </div>
-              <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-2">Mínimo de 8 caracteres, com letras e números.</p>
+              <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-2">Mínimo de 12 caracteres, com letras e números.</p>
             </div>
           )}
 

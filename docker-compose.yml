@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: prolog
       POSTGRES_USER: prolog
@@ -14,5 +15,55 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  gestao-demanda:
+    image: jpedro2099/gestao-demanda:1.0
+    container_name: gestao-demanda
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Entre containers, use o nome do serviço PostgreSQL, nunca localhost.
+      DATABASE_URL: postgresql://prolog:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}@postgres:5432/prolog
+      DB_SSL: "false"
+      # URL pública acessada pelo navegador. Em servidor, informe domínio/HTTPS no .env.
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET:?Defina SESSION_SECRET com pelo menos 32 caracteres}
+      LOG_HASH_SECRET: ${LOG_HASH_SECRET:?Defina LOG_HASH_SECRET}
+      METRICS_TOKEN: ${METRICS_TOKEN:?Defina METRICS_TOKEN}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Defina MFA_ENCRYPTION_KEY em base64 com 32 bytes}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      REQUIRE_ADMIN_MFA: ${REQUIRE_ADMIN_MFA:-false}
+      PASSWORD_RESET_WEBHOOK_URL: ${PASSWORD_RESET_WEBHOOK_URL:-}
+      PASSWORD_RESET_WEBHOOK_SECRET: ${PASSWORD_RESET_WEBHOOK_SECRET:-}
+      UPLOAD_DIR: /app/uploads
+    command: ["sh", "-c", "node build/migrate.mjs && exec node build/server.mjs"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - prolog_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+  bootstrap-admin:
+    image: jpedro2099/gestao-demanda:1.0
+    profiles: ["setup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://prolog:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}@postgres:5432/prolog
+      DB_SSL: "false"
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Administrador}
+    command: ["node", "build/create-admin.mjs"]
+    restart: "no"
 volumes:
   prolog_postgres:
+  prolog_uploads:

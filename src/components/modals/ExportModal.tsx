@@ -41,10 +41,10 @@ export const ExportModal: React.FC = () => {
 
   const datasetToExport = includeOnlyFiltered ? filteredDemands : demands;
 
-  const handleExportExcel = async () => {
+  const handleExportCsv = async () => {
     try {
       setIsExporting(true);
-      await ExportService.exportToExcel({
+      await ExportService.exportToCsv({
         demands: datasetToExport,
         statuses,
         priorities,
@@ -52,19 +52,19 @@ export const ExportModal: React.FC = () => {
         users,
         teams,
         currentUser,
-        fileName: `Gestao_Demandas_Relatorio_${new Date().toISOString().slice(0, 10)}.xlsx`
+        fileName: `Gestao_Demandas_Relatorio_${new Date().toISOString().slice(0, 10)}.csv`
       });
       showToast({
         type: 'success',
-        title: 'Planilha Gerada com Sucesso',
-        message: 'O arquivo Excel (.xlsx) profissional com 2 abas foi baixado.'
+        title: 'Arquivo CSV gerado',
+        message: 'A exportação segura e compatível com planilhas foi baixada.'
       });
       setExportModalOpen(false);
     } catch (err) {
       showToast({
         type: 'error',
         title: 'Falha na Exportação',
-        message: 'Não foi possível gerar a planilha Excel.'
+        message: 'Não foi possível gerar o arquivo CSV.'
       });
     } finally {
       setIsExporting(false);
@@ -77,7 +77,7 @@ export const ExportModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div data-modal-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
       <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center space-x-2">
@@ -138,20 +138,20 @@ export const ExportModal: React.FC = () => {
               <div>
                 <div className="flex items-center space-x-2 text-emerald-900 dark:text-emerald-300 font-bold">
                   <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                  <span>Planilha Excel (.xlsx)</span>
+                  <span>Arquivo CSV (.csv)</span>
                 </div>
                 <p className="text-[11px] text-emerald-950/80 dark:text-emerald-300/80 mt-1">
-                  2 abas completas com cores corporativas: Resumo Executivo e Base 5W2H analítica.
+                  Dados tabulares compatíveis com Excel, LibreOffice e Google Planilhas.
                 </p>
               </div>
 
               <button
-                onClick={handleExportExcel}
+                onClick={handleExportCsv}
                 disabled={isExporting}
                 className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold flex items-center justify-center space-x-1.5 transition-all shadow-xs"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>{isExporting ? 'Processando...' : 'Baixar Excel (.xlsx)'}</span>
+                <span>{isExporting ? 'Processando...' : 'Baixar CSV (.csv)'}</span>
               </button>
             </div>
           </div>

@@ -4,12 +4,14 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { useApp } from '../../context/AppContext';
 import { Team, User } from '../../types';
 import { TeamModal } from '../modals/TeamModal';
 import { UserModal } from '../modals/UserModal';
-import { ClientModal } from '../modals/ClientModal';
-import { RbacMatrixView } from './RbacMatrixView';
+import { ClientModal, ClientRecord } from '../modals/ClientModal';
+import { apiClient } from '../../services/apiClient';
+import { UserAvatar } from '../common/UserAvatar';
 import {
   Users,
   UserPlus,
@@ -32,9 +34,7 @@ import {
 } from 'lucide-react';
 
 export const TeamsManagement: React.FC = () => {
-  const { teams, users, demands, createUser, updateTeam, deleteTeam, updateUser, deleteUser, showToast, currentUser, hasPermission } = useApp();
-
-  const [activeTab, setActiveTab] = useState<'teams_users' | 'rbac_matrix'>('teams_users');
+  const { teams, users, demands, updateTeam, deleteTeam, updateUser, deleteUser, showToast, currentUser, hasPermission } = useApp();
 
   // Modals state
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
@@ -42,25 +42,37 @@ export const TeamsManagement: React.FC = () => {
 
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [clientToEdit, setClientToEdit] = useState<ClientRecord | null>(null);
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientsLoading, setClientsLoading] = useState(true);
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
-  const [accessRequests, setAccessRequests] = useState<Array<{ id: string; name: string; email: string; roleTitle?: string; department?: string; branch?: string; teamName?: string }>>([]);
-  const [requestRoles, setRequestRoles] = useState<Record<string, User['role']>>({});
   const [userSearch, setUserSearch] = useState('');
-  const loadAccessRequests = () => fetch('/api/admin/access-requests', { credentials: 'include' }).then(response => response.ok ? response.json() : []).then(setAccessRequests).catch(() => undefined);
-  useEffect(() => { loadAccessRequests(); }, []);
+  const [teamSearch, setTeamSearch] = useState('');
+  const [statusFeedbackId, setStatusFeedbackId] = useState<string | null>(null);
+  const reduceMotion = useReducedMotion();
 
-  const decideAccessRequest = async (request: typeof accessRequests[number], status: 'approved' | 'rejected') => {
-    const role = requestRoles[request.id] || 'colaborador';
+  const showStatusFeedback = (id: string) => {
+    setStatusFeedbackId(id);
+    window.setTimeout(() => setStatusFeedbackId(current => current === id ? null : current), 450);
+  };
+
+  const loadClients = async () => {
+    setClientsLoading(true);
+    try { setClients(await apiClient.clients() as ClientRecord[]); }
+    catch (error) { showToast({ type: 'error', title: 'Clientes não carregados', message: error instanceof Error ? error.message : 'Falha ao consultar a base de clientes.' }); }
+    finally { setClientsLoading(false); }
+  };
+
+  useEffect(() => { void loadClients(); }, []);
+
+  const handleToggleClientActive = async (client: ClientRecord) => {
     try {
-      const response = await fetch(`/api/admin/users/${request.id}/approval`, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, role }) });
-      const data = await response.json(); if (!response.ok) throw new Error(data.message);
-      if (status === 'approved' && !users.some(user => user.id === request.id)) {
-        const matchedTeam = teams.find(team => team.name.toLowerCase() === request.teamName?.toLowerCase());
-        createUser({ name: request.name, email: request.email, role, roleTitle: request.roleTitle || '', department: request.department || '', branch: request.branch, avatar: '', teamIds: matchedTeam ? [matchedTeam.id] : [], active: true, approvalStatus: 'approved', approvedAt: data.approvedAt, approvedByUserId: currentUser.id }, request.id);
-      }
-      setAccessRequests(previous => previous.filter(item => item.id !== request.id));
-      showToast({ type: status === 'approved' ? 'success' : 'warning', title: status === 'approved' ? 'Acesso aprovado' : 'Solicitação rejeitada', message: `${request.name}: ${status === 'approved' ? `perfil ${role} liberado` : 'acesso não liberado'}.` });
-    } catch (error) { showToast({ type: 'error', title: 'Decisão não registrada', message: error instanceof Error ? error.message : 'Tente novamente.' }); }
+      const updated = await apiClient.updateClient(client.id, { active: !client.active }) as ClientRecord;
+      setClients(previous => previous.map(item => item.id === client.id ? updated : item));
+      window.dispatchEvent(new CustomEvent('prolog:clients-updated'));
+      showToast({ type: 'info', title: updated.active ? 'Cliente reativado' : 'Cliente desativado', message: `${updated.company} foi atualizado.` });
+    } catch (error) { showToast({ type: 'error', title: 'Cliente não atualizado', message: error instanceof Error ? error.message : 'Falha ao salvar.' }); }
   };
 
   const handleCreateTeam = () => {
@@ -73,14 +85,16 @@ export const TeamsManagement: React.FC = () => {
     setIsTeamModalOpen(true);
   };
 
-  const handleToggleTeamActive = (team: Team) => {
+  const handleToggleTeamActive = async (team: Team) => {
     const nextActive = !team.active;
-    updateTeam(team.id, { active: nextActive });
+    try { await updateTeam(team.id, { active: nextActive }); }
+    catch (error) { showToast({ type: 'error', title: 'Equipe não atualizada', message: error instanceof Error ? error.message : 'Falha ao salvar.' }); return; }
     showToast({
       type: 'info',
       title: nextActive ? 'Equipe Reativada' : 'Equipe Desativada',
       message: `A equipe "${team.name}" foi ${nextActive ? 'reativada' : 'desativada/cancelada'}.`
     });
+    showStatusFeedback(team.id);
   };
 
   const handleDeleteTeam = (team: Team) => {
@@ -107,28 +121,16 @@ export const TeamsManagement: React.FC = () => {
     setIsUserModalOpen(true);
   };
 
-  const handleToggleUserActive = (user: User) => {
+  const handleToggleUserActive = async (user: User) => {
     const nextActive = !user.active;
-    updateUser(user.id, { active: nextActive });
+    try { await updateUser(user.id, { active: nextActive }); }
+    catch (error) { showToast({ type: 'error', title: 'Usuário não atualizado', message: error instanceof Error ? error.message : 'Falha ao salvar.' }); return; }
     showToast({
       type: 'info',
       title: nextActive ? 'Usuário Reativado' : 'Usuário Desativado',
       message: `O colaborador ${user.name} foi ${nextActive ? 'reativado' : 'desativado'}.`
     });
-  };
-
-  const handleApproval = async (user: User, status: 'approved' | 'rejected') => {
-    try {
-      const response = await fetch(`/api/admin/users/${user.id}/approval`, {
-        method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Não foi possível registrar a decisão.');
-      updateUser(user.id, { approvalStatus: status, active: status === 'approved', approvedAt: data.approvedAt, approvedByUserId: currentUser.id });
-      showToast({ type: status === 'approved' ? 'success' : 'warning', title: status === 'approved' ? 'Acesso aprovado' : 'Acesso rejeitado', message: `${user.name} ${status === 'approved' ? 'já pode acessar o PROLOG' : 'permanece sem acesso ao sistema'}.` });
-    } catch (error) {
-      showToast({ type: 'error', title: 'Decisão não registrada', message: error instanceof Error ? error.message : 'Tente novamente.' });
-    }
+    showStatusFeedback(user.id);
   };
 
   const handleDeleteUser = (user: User) => {
@@ -152,12 +154,15 @@ export const TeamsManagement: React.FC = () => {
       }
     }
 
-    fetch(`/api/admin/users/${user.id}`, { method: 'DELETE', credentials: 'include' }).catch(() => undefined);
     deleteUser(user.id);
   };
 
   const normalizedSearch = userSearch.trim().toLocaleLowerCase('pt-BR');
   const filteredUsers = users.filter(user => !normalizedSearch || [user.name, user.email, user.roleTitle, user.department, user.role].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(normalizedSearch)));
+  const normalizedTeamSearch = teamSearch.trim().toLocaleLowerCase('pt-BR');
+  const filteredTeams = teams.filter(team => !normalizedTeamSearch || [team.name, team.description, team.department].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(normalizedTeamSearch)));
+  const normalizedClientSearch = clientSearch.trim().toLocaleLowerCase('pt-BR');
+  const filteredClients = clients.filter(client => !normalizedClientSearch || [client.company, client.name, client.email, client.phone].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(normalizedClientSearch)));
 
   return (
     <div className="space-y-6 pb-8 font-sans">
@@ -173,8 +178,7 @@ export const TeamsManagement: React.FC = () => {
           </p>
         </div>
 
-        {activeTab === 'teams_users' && (
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <button
               onClick={handleCreateTeam}
               className="flex-1 sm:flex-none justify-center px-3.5 py-2 bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
@@ -190,50 +194,13 @@ export const TeamsManagement: React.FC = () => {
               <UserPlus className="w-4 h-4" />
               <span>Novo Usuário</span>
             </button>
-            <button onClick={() => setIsClientModalOpen(true)} className="w-full sm:w-auto justify-center px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm">
+            <button onClick={() => { setClientToEdit(null); setIsClientModalOpen(true); }} className="w-full sm:w-auto justify-center px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm">
               <Building2 className="w-4 h-4" />
               <span>Novo Cliente</span>
             </button>
-          </div>
-        )}
+        </div>
       </div>
 
-      {/* Main Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-        <button
-          onClick={() => setActiveTab('teams_users')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
-            activeTab === 'teams_users'
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700'
-          }`}
-          id="tab-teams-users"
-        >
-          <Users className="w-4 h-4" />
-          <span>Equipes & Colaboradores</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('rbac_matrix')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
-            activeTab === 'rbac_matrix'
-              ? 'bg-purple-600 text-white shadow-xs'
-              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700'
-          }`}
-          id="tab-rbac-matrix"
-        >
-          <ShieldCheck className="w-4 h-4" />
-          <span>Matriz de Permissões RBAC</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-purple-200 dark:bg-purple-900 text-purple-900 dark:text-purple-200">
-            Segregado
-          </span>
-        </button>
-      </div>
-
-      {activeTab === 'rbac_matrix' ? (
-        <RbacMatrixView />
-      ) : (
-        <>
           {/* Teams Section */}
           <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -243,18 +210,26 @@ export const TeamsManagement: React.FC = () => {
               {teams.length}
             </span>
           </h3>
-
+          <div className="relative w-full max-w-xs"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400"/><input value={teamSearch} onChange={event => setTeamSearch(event.target.value)} type="search" placeholder="Pesquisar equipes..." className="w-full h-9 pl-9 pr-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500"/></div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {teams.map((team) => {
+        <motion.div
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+          initial="hidden"
+          animate="visible"
+          variants={{ hidden: {}, visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.055 } } }}
+        >
+          {filteredTeams.map((team) => {
             const teamLeader = users.find((u) => u.id === team.leaderId);
             const teamMembers = users.filter((u) => team.memberIds.includes(u.id));
             const teamDemandsCount = demands.filter((d) => d.teamId === team.id).length;
 
             return (
-              <div
+              <motion.article
                 key={team.id}
+                variants={{ hidden: { opacity: 0, y: reduceMotion ? 0 : 10 }, visible: { opacity: 1, y: 0 } }}
+                transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }}
+                whileHover={reduceMotion ? undefined : { y: -2, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.10)' }}
                 className={`bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border shadow-xs flex flex-col justify-between space-y-4 transition-all relative ${
                   team.active
                     ? 'border-slate-200 dark:border-slate-800'
@@ -278,9 +253,9 @@ export const TeamsManagement: React.FC = () => {
                         {teamDemandsCount} demandas
                       </span>
                       {!team.active && (
-                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
+                        <motion.span initial={{ opacity: 0, scale: reduceMotion ? 1 : 0.85 }} animate={{ opacity: 1, scale: 1 }} className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 transition-colors duration-200">
                           Inativa
-                        </span>
+                        </motion.span>
                       )}
                     </div>
                   </div>
@@ -300,11 +275,7 @@ export const TeamsManagement: React.FC = () => {
                     <div className="flex items-center space-x-2">
                       <span className="text-[11px] text-slate-400 font-semibold w-12 shrink-0">Líder:</span>
                       <div className="flex items-center space-x-1.5 font-bold text-slate-800 dark:text-slate-200 min-w-0">
-                        <img
-                          src={teamLeader.avatar}
-                          alt={teamLeader.name}
-                          className="w-5 h-5 rounded-full object-cover shrink-0"
-                        />
+                        <UserAvatar name={teamLeader.name} src={teamLeader.avatar} className="w-5 h-5 rounded-full text-[8px]" />
                         <span className="truncate">{teamLeader.name}</span>
                       </div>
                     </div>
@@ -316,15 +287,7 @@ export const TeamsManagement: React.FC = () => {
                         Membros ({teamMembers.length}):
                       </span>
                       <div className="flex -space-x-2">
-                        {teamMembers.slice(0, 5).map((m) => (
-                          <img
-                            key={m.id}
-                            src={m.avatar}
-                            alt={m.name}
-                            title={`${m.name} - ${m.roleTitle}`}
-                            className="w-6 h-6 rounded-full object-cover ring-2 ring-white dark:ring-slate-900"
-                          />
-                        ))}
+                        {teamMembers.slice(0, 5).map((m) => <UserAvatar key={m.id} name={m.name} src={m.avatar} title={`${m.name} - ${m.roleTitle}`} className="w-6 h-6 rounded-full ring-2 ring-white dark:ring-slate-900 text-[9px]" />)}
                         {teamMembers.length > 5 && (
                           <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-bold flex items-center justify-center text-slate-700 dark:text-slate-300 ring-2 ring-white dark:ring-slate-900">
                             +{teamMembers.length - 5}
@@ -348,7 +311,7 @@ export const TeamsManagement: React.FC = () => {
                         className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/60 transition-colors"
                         title={team.active ? 'Desativar / Cancelar Equipe' : 'Reativar Equipe'}
                       >
-                        <Ban className="w-3.5 h-3.5" />
+                        <motion.span animate={statusFeedbackId === team.id && !reduceMotion ? { rotate: [0, -12, 12, 0], scale: [1, 1.2, 1] } : {}}><Ban className="w-3.5 h-3.5" /></motion.span>
                       </button>
 
                       <button
@@ -361,13 +324,12 @@ export const TeamsManagement: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              </div>
+              </motion.article>
             );
           })}
-        </div>
+          {filteredTeams.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Nenhuma equipe encontrada.</div>}
+        </motion.div>
       </div>
-
-      {accessRequests.length > 0 && <section className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/20 overflow-hidden"><header className="p-4 border-b border-amber-200 dark:border-amber-900"><h3 className="text-sm font-black text-amber-900 dark:text-amber-200">Solicitações aguardando aprovação</h3><p className="text-xs text-amber-700 dark:text-amber-400 mt-1">Confira os dados e escolha o perfil de acesso antes de liberar.</p></header><div className="divide-y divide-amber-200 dark:divide-amber-900">{accessRequests.map(request => <article key={request.id} className="p-4 bg-white/70 dark:bg-slate-900/50 grid lg:grid-cols-[1fr_1fr_auto] gap-4 items-center"><div><p className="text-sm font-bold text-slate-900 dark:text-white">{request.name}</p><p className="text-xs text-slate-500">{request.email}</p></div><div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs"><p><span className="text-slate-400">Cargo:</span> {request.roleTitle}</p><p><span className="text-slate-400">Setor:</span> {request.department}</p><p><span className="text-slate-400">Filial:</span> {request.branch}</p><p><span className="text-slate-400">Equipe:</span> {request.teamName}</p></div><div className="flex flex-wrap items-center gap-2"><select value={requestRoles[request.id] || 'colaborador'} onChange={event => setRequestRoles(previous => ({ ...previous, [request.id]: event.target.value as User['role'] }))} className="h-9 px-2 rounded-lg border border-slate-300 bg-white text-xs font-bold"><option value="colaborador">Colaborador</option><option value="gestor">Gestor</option><option value="diretoria">Diretoria</option><option value="admin">Administrador</option></select><button onClick={() => decideAccessRequest(request, 'approved')} className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprovar</button><button onClick={() => decideAccessRequest(request, 'rejected')} className="h-9 px-3 rounded-lg bg-red-50 text-red-700 text-xs font-bold">Rejeitar</button></div></article>)}</div></section>}
 
       {/* Users Table Section */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
@@ -378,7 +340,6 @@ export const TeamsManagement: React.FC = () => {
               <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-bold">
                 {users.length}
               </span>
-              {users.some(user => user.approvalStatus === 'pending') && <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 text-[10px] font-bold">{users.filter(user => user.approvalStatus === 'pending').length} pendente(s)</span>}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               Gerencie cargos, atribuições de equipes e permissões operacionais
@@ -413,11 +374,7 @@ export const TeamsManagement: React.FC = () => {
                   <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                     <td className="p-3.5">
                       <div className="flex items-center space-x-2.5">
-                        <img
-                          src={u.avatar}
-                          alt={u.name}
-                          className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 shrink-0"
-                        />
+                        <UserAvatar name={u.name} src={u.avatar} className="w-8 h-8 rounded-full ring-1 ring-slate-200 text-[10px]" />
                         <div>
                           <p className="font-bold text-slate-900 dark:text-slate-100">
                             {u.name}
@@ -451,19 +408,13 @@ export const TeamsManagement: React.FC = () => {
                     <td className="p-3.5 font-mono text-slate-500">{u.email}</td>
                     <td className="p-3.5 text-center">
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          u.id !== 'system-admin' && !u.approvalStatus
-                            ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
-                            : u.approvalStatus === 'pending'
-                            ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
-                            : u.approvalStatus === 'rejected'
-                            ? 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300'
-                            : u.active
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors duration-200 ${
+                          u.active
                             ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
                             : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
                         }`}
                       >
-                        {u.id !== 'system-admin' && !u.approvalStatus ? 'Sem credencial' : u.approvalStatus === 'pending' ? 'Aguardando aprovação' : u.approvalStatus === 'rejected' ? 'Rejeitado' : u.active ? 'Ativo' : 'Inativo'}
+                        {u.active ? 'Ativo' : 'Inativo'}
                       </span>
                     </td>
                     <td className="p-3.5 text-center font-bold text-blue-600 dark:text-blue-400">
@@ -471,13 +422,6 @@ export const TeamsManagement: React.FC = () => {
                     </td>
                     <td className="p-3.5 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {u.id !== 'system-admin' && !u.approvalStatus && <button onClick={() => handleEditUser(u)} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:text-blue-300">Configurar acesso</button>}
-                        {u.approvalStatus === 'pending' && (
-                          <>
-                            <button onClick={() => handleApproval(u, 'approved')} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300" title="Aprovar acesso">Aprovar</button>
-                            <button onClick={() => handleApproval(u, 'rejected')} className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-red-700 bg-red-50 hover:bg-red-100 dark:bg-red-950/50 dark:text-red-300" title="Rejeitar acesso">Rejeitar</button>
-                          </>
-                        )}
                         <button
                           onClick={() => handleEditUser(u)}
                           className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-colors"
@@ -490,7 +434,7 @@ export const TeamsManagement: React.FC = () => {
                           className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/60 transition-colors"
                           title={u.active ? 'Desativar Usuário' : 'Reativar Usuário'}
                         >
-                          <UserX className="w-3.5 h-3.5" />
+                          <motion.span animate={statusFeedbackId === u.id && !reduceMotion ? { rotate: [0, -12, 12, 0], scale: [1, 1.2, 1] } : {}}><UserX className="w-3.5 h-3.5" /></motion.span>
                         </button>
                         <button
                           onClick={() => handleDeleteUser(u)}
@@ -509,8 +453,22 @@ export const TeamsManagement: React.FC = () => {
           </table>
         </div>
       </div>
-      </>
-      )}
+
+      {/* Clients Table Section */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div><h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2"><Building2 className="w-4 h-4 text-emerald-600" /><span>Clientes Cadastrados</span><span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-bold">{clients.length}</span></h3><p className="text-xs text-slate-500 mt-0.5">Gerencie empresas e contatos solicitantes vinculados às demandas</p></div>
+          <label className="relative w-full sm:w-72"><span className="sr-only">Pesquisar clientes</span><Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" /><input value={clientSearch} onChange={event => setClientSearch(event.target.value)} type="search" placeholder="Pesquisar clientes..." className="w-full h-9 pl-9 pr-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 outline-none focus:ring-2 focus:ring-emerald-500" /></label>
+        </div>
+        <div className="overflow-x-auto"><table className="w-full text-left text-xs">
+          <thead className="bg-slate-50 dark:bg-slate-800/80 font-bold text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800"><tr><th className="p-3.5">Empresa / Cliente</th><th className="p-3.5">Contato</th><th className="p-3.5">E-mail</th><th className="p-3.5">Telefone</th><th className="p-3.5 text-center">Demandas</th><th className="p-3.5 text-center">Status</th><th className="p-3.5 text-right">Ações</th></tr></thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+            {filteredClients.map(client => { const demandCount = demands.filter(demand => demand.clientId === client.id).length; return <tr key={client.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"><td className="p-3.5"><div className="flex items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Building2 className="w-4 h-4" /></span><span className="font-bold text-slate-900 dark:text-slate-100">{client.company}</span></div></td><td className="p-3.5 font-medium">{client.name}</td><td className="p-3.5 font-mono text-slate-500">{client.email}</td><td className="p-3.5">{client.phone || '—'}</td><td className="p-3.5 text-center font-bold text-blue-600 dark:text-blue-400">{demandCount}</td><td className="p-3.5 text-center"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${client.active ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>{client.active ? 'Ativo' : 'Inativo'}</span></td><td className="p-3.5"><div className="flex justify-end gap-1">{hasPermission('clients:update') && <><button type="button" onClick={() => { setClientToEdit(client); setIsClientModalOpen(true); }} title="Editar cliente" className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60"><Edit2 className="w-3.5 h-3.5" /></button><button type="button" onClick={() => void handleToggleClientActive(client)} title={client.active ? 'Desativar cliente' : 'Reativar cliente'} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/60"><Ban className="w-3.5 h-3.5" /></button></>}</div></td></tr>; })}
+            {!clientsLoading && filteredClients.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-sm text-slate-500">Nenhum cliente encontrado{clientSearch ? ` para “${clientSearch}”` : ''}.</td></tr>}
+            {clientsLoading && <tr><td colSpan={7} className="p-8 text-center text-sm text-slate-500">Carregando clientes...</td></tr>}
+          </tbody>
+        </table></div>
+      </div>
 
       {/* Reusable Modals */}
       <TeamModal
@@ -530,7 +488,13 @@ export const TeamsManagement: React.FC = () => {
         }}
         userToEdit={userToEdit}
       />
-      <ClientModal isOpen={isClientModalOpen} onClose={() => setIsClientModalOpen(false)} onCreated={client => showToast({ type: 'success', title: 'Cliente cadastrado', message: `${client.company} já pode ser selecionado nas demandas.` })} />
+      <ClientModal
+        isOpen={isClientModalOpen}
+        clientToEdit={clientToEdit}
+        onClose={() => { setIsClientModalOpen(false); setClientToEdit(null); }}
+        onCreated={client => { setClients(previous => [...previous, client]); showToast({ type: 'success', title: 'Cliente cadastrado', message: `${client.company} já pode ser selecionado nas demandas.` }); }}
+        onSaved={client => { setClients(previous => previous.map(item => item.id === client.id ? client : item)); showToast({ type: 'success', title: 'Cliente atualizado', message: `${client.company} foi salvo.` }); }}
+      />
     </div>
   );
 };

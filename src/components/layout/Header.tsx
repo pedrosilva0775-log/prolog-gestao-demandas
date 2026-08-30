@@ -5,9 +5,14 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
+import { isCalendarDateOverdue } from '../../utils/date';
 import { Demand } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
+import { UserAvatar } from '../common/UserAvatar';
 import { ProfileSettingsModal } from '../modals/ProfileSettingsModal';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { dropdownVariants } from '../motion/presets';
+import { MotionButton } from '../motion/MotionButton';
 import {
   Search,
   Plus,
@@ -35,6 +40,7 @@ export const Header: React.FC<{
   onOpenNotifications: () => void;
   onOpenCreateModal: () => void;
 }> = ({ onOpenNotifications, onOpenCreateModal }) => {
+  const reduceMotion = useReducedMotion();
   const {
     currentUser,
     users,
@@ -51,6 +57,7 @@ export const Header: React.FC<{
     resetAllData,
     toggleSidebar,
     createDemand,
+    showToast,
     hasPermission
   } = useApp();
 
@@ -138,8 +145,8 @@ export const Header: React.FC<{
       if (created) {
         // Keep focus ready for another quick add or let user continue
       }
-    } catch (err) {
-      console.error('Erro ao criar demanda rápida:', err);
+    } catch {
+      showToast({type:'error',title:'Demanda não criada',message:'Não foi possível registrar a demanda rápida. Tente novamente.'});
     } finally {
       setIsQuickAdding(false);
     }
@@ -228,7 +235,7 @@ export const Header: React.FC<{
   const overdueCount = demands.filter((d) => {
     const isCompleted = statuses.find((s) => s.id === d.statusId)?.category === 'completed';
     const isCancelled = statuses.find((s) => s.id === d.statusId)?.category === 'cancelled';
-    return !isCompleted && !isCancelled && new Date(d.dueDate) < now;
+    return !isCompleted && !isCancelled && isCalendarDateOverdue(d.dueDate, now);
   }).length;
 
   const blockedCount = demands.filter((d) => d.blocker?.isBlocked).length;
@@ -347,8 +354,9 @@ export const Header: React.FC<{
           </div>
 
           {/* Global Search Results Dropdown Popover */}
+          <AnimatePresence>
           {isSearchFocused && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150 font-sans">
+            <motion.div variants={reduceMotion ? undefined : dropdownVariants} initial={reduceMotion ? false : 'closed'} animate="open" exit="closed" className="absolute top-full left-0 right-0 mt-2 origin-top bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden z-50 font-sans">
               {searchQuery.trim() ? (
                 <div>
                   {/* Results Header */}
@@ -468,8 +476,9 @@ export const Header: React.FC<{
                   </div>
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -513,15 +522,15 @@ export const Header: React.FC<{
 
         {/* 3. Primary CTA: + Nova Demanda */}
         {canCreateDemands && (
-          <button
+          <MotionButton
             onClick={onOpenCreateModal}
-            className="bg-blue-600 text-white px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-blue-500/20 hover:bg-blue-700 transition-all flex items-center gap-1.5 active:scale-95 shrink-0"
+            className="bg-blue-600 text-white px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-blue-500/20 hover:bg-blue-700 transition-colors duration-150 flex items-center gap-1.5 shrink-0"
             id="btn-new-demand-header"
           >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Nova Demanda</span>
             <span className="sm:hidden">Nova</span>
-          </button>
+          </MotionButton>
         )}
 
         {/* 4. Active User Avatar & Profile Menu */}
@@ -532,11 +541,12 @@ export const Header: React.FC<{
             title={`${currentUser.name} (${currentUser.roleTitle || currentUser.role})`}
             id="btn-user-profile-menu"
           >
-            {currentUser.avatar ? <img src={currentUser.avatar} alt={currentUser.name} className="w-8 h-8 rounded-full object-cover border border-slate-200 dark:border-slate-700 shadow-2xs" /> : <span className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 grid place-items-center text-xs font-black">{currentUser.name.charAt(0).toUpperCase()}</span>}
+            <UserAvatar name={currentUser.name} src={currentUser.avatar} className="w-8 h-8 rounded-full border border-slate-200 dark:border-slate-700 shadow-2xs text-xs" />
           </button>
 
+          <AnimatePresence>
           {userDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans">
+            <motion.div variants={reduceMotion ? undefined : dropdownVariants} initial={reduceMotion ? false : 'closed'} animate="open" exit="closed" className="absolute right-0 mt-2 w-72 origin-top-right bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 font-sans">
               <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
                 <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
                   {currentUser.name}
@@ -576,8 +586,9 @@ export const Header: React.FC<{
                   <span>Limpar Dados Locais</span>
                 </button>
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </div>
       </div>
       <ProfileSettingsModal isOpen={profileSettingsOpen} onClose={() => setProfileSettingsOpen(false)} />
