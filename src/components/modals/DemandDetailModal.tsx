@@ -108,6 +108,7 @@ export const DemandDetailModal: React.FC = () => {
   const [isCompletingOpen, setIsCompletingOpen] = useState(false);
   const [completionError, setCompletionError] = useState('');
   const [isSubmittingCompletion, setIsSubmittingCompletion] = useState(false);
+  const [completionSuccess, setCompletionSuccess] = useState<{ code: string; title: string; typeName: string } | null>(null);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -556,6 +557,7 @@ export const DemandDetailModal: React.FC = () => {
       await completeDemand(selectedDemand.id, completionSummary.trim());
       setIsCompletingOpen(false);
       setCompletionSummary('');
+      setCompletionSuccess({ code: selectedDemand.code, title: selectedDemand.title, typeName: category?.name || 'Demanda' });
     } catch (error) {
       setCompletionError(error instanceof Error ? error.message : 'Não foi possível concluir a demanda. Verifique os requisitos e tente novamente.');
     } finally {
@@ -564,6 +566,11 @@ export const DemandDetailModal: React.FC = () => {
   };
 
   const handleDelete = () => setIsDeleteConfirmOpen(true);
+
+  const handleCloseCompletionSuccess = () => {
+    setCompletionSuccess(null);
+    setSelectedDemand(null);
+  };
 
   const handleConfirmDelete = async () => {
     setIsDeleting(true);
@@ -577,6 +584,26 @@ export const DemandDetailModal: React.FC = () => {
       setIsDeleting(false);
     }
   };
+
+  if (completionSuccess) return (
+    <div data-modal-overlay="true" className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+      <div role="dialog" aria-modal="true" aria-labelledby="completion-success-title" aria-describedby="completion-success-description" className="w-full max-w-md rounded-2xl border border-emerald-200 bg-white p-6 text-center shadow-2xl dark:border-emerald-800 dark:bg-slate-900">
+        <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+          <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
+        </div>
+        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Conclusão de {completionSuccess.typeName}</p>
+        <h2 id="completion-success-title" className="text-xl font-black text-slate-900 dark:text-white">Conclusão registrada com sucesso!</h2>
+        <p id="completion-success-description" className="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+          <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{completionSuccess.code}</span>
+          {' — '}{completionSuccess.title}
+        </p>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">O quadro e os indicadores já foram atualizados.</p>
+        <button type="button" autoFocus onClick={handleCloseCompletionSuccess} className="mt-6 w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">
+          Voltar ao quadro
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div data-modal-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">

@@ -927,7 +927,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const response = await persistCompletion(demandId, updatedDemand.statusId, summary);
     if (!response) return;
-    const autoUnblocked = response.autoUnblocked;
 
     confetti({
       particleCount: 100,
@@ -942,12 +941,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       fieldChanged: 'Status',
       newValue: completedStatus.name,
       details: `Resumo de Entrega: ${summary}`
-    });
-
-    showToast({
-      type: 'success',
-      title: 'Demanda Concluída com Sucesso!',
-      message: autoUnblocked.length ? `[${existing.code}] finalizada e ${autoUnblocked.map(item => item.code).join(', ')} desbloqueada automaticamente.` : `[${existing.code}] finalizada e homologada.`
     });
 
   };
