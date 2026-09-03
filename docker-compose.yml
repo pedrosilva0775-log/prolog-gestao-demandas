@@ -16,7 +16,7 @@ services:
       timeout: 5s
       retries: 5
   gestao-demanda:
-    image: jpedro2099/gestao-demanda@sha256:5974bab8eaef1733b849bbf2ad95beda72365a2798c0558c74f95f0c8d27b079
+    image: jpedro2099/gestao-demanda@sha256:2f297eb6e708dda96e66040f23ee97e89460cfdffbb81e637eb92e97a005733e
     container_name: gestao-demanda
     restart: unless-stopped
     depends_on:
@@ -51,7 +51,7 @@ services:
       start_period: 20s
       retries: 3
   bootstrap-admin:
-    image: jpedro2099/gestao-demanda@sha256:5974bab8eaef1733b849bbf2ad95beda72365a2798c0558c74f95f0c8d27b079
+    image: jpedro2099/gestao-demanda@sha256:2f297eb6e708dda96e66040f23ee97e89460cfdffbb81e637eb92e97a005733e
     profiles: ["setup"]
     depends_on:
       postgres:
