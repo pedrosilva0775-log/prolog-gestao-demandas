@@ -5,6 +5,7 @@ import type { Database } from '../database.js';
 type DemandRow=Selectable<Database['demands']>;
 type DatabaseExecutor=Kysely<Database>|Transaction<Database>;
 type Override={justification:string}|undefined;
+type TransitionOperation='status_change'|'completion';
 
 const conflict=(message:string)=>{throw Object.assign(new Error(message),{status:409,code:'CONFLICT'});};
 const invalid=(field:string,message:string)=>{throw Object.assign(new Error(message),{status:422,code:'VALIDATION_ERROR',fieldErrors:{[field]:[message]}});};
@@ -37,7 +38,7 @@ export const rejectCompletedStatusForGenericWrite=async(db:DatabaseExecutor,modu
   if(status?.category==='completed')invalid('statusId','Use a operação específica de conclusão para concluir a demanda.');
 };
 
-export const validateDemandTransition=async(db:DatabaseExecutor,moduleId:string,row:DemandRow,targetStatusId:string,moduleRole:string,override:Override)=>{
+export const validateDemandTransition=async(db:DatabaseExecutor,moduleId:string,row:DemandRow,targetStatusId:string,moduleRole:string,override:Override,operation:TransitionOperation='status_change')=>{
   const configs=await db.selectFrom('module_configurations').select(['key','value']).where('module_id','=',moduleId).where('key','in',['statuses','workflow']).execute();
   const statuses=statusConfigDtoSchema.array().parse(configs.find(item=>item.key==='statuses')?.value);
   const policy=workflowPolicySchema.parse(configs.find(item=>item.key==='workflow')?.value);
@@ -46,7 +47,8 @@ export const validateDemandTransition=async(db:DatabaseExecutor,moduleId:string,
   if(!current||!target)throw Object.assign(new Error('Status atual ou de destino não existe ou está inativo neste módulo.'),{status:422,code:'VALIDATION_ERROR',fieldErrors:{statusId:['Selecione um status ativo do módulo.']}});
   if(current.id===target.id)return {current,target,overridden:false};
   const overrideAllowed=Boolean(override&&policy.overrideRoles.some(role=>role===moduleRole)&&override.justification.length>=policy.minimumOverrideJustificationLength);
-  if(!policy.transitions[current.category]?.includes(target.category)&&!overrideAllowed)conflict(`A transição de ${current.name} para ${target.name} não é permitida.`);
+  const dedicatedCompletion=operation==='completion'&&target.category==='completed'&&current.category!=='completed'&&current.category!=='cancelled';
+  if(!dedicatedCompletion&&!policy.transitions[current.category]?.includes(target.category)&&!overrideAllowed)conflict(`A transição de ${current.name} para ${target.name} não é permitida.`);
   const payload=typeof row.payload==='object'&&row.payload!==null?row.payload as Record<string,unknown>:{};
   const blocker=payload.blocker as {isBlocked?:boolean;kind?:string}|undefined;
   if(blocker?.isBlocked&&blocker.kind!=='impediment')conflict('Atividade bloqueada. Resolva o bloqueio antes de alterar o status.');

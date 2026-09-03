@@ -106,6 +106,8 @@ export const DemandDetailModal: React.FC = () => {
   // Completion modal/box
   const [completionSummary, setCompletionSummary] = useState(selectedDemand?.completionSummary || '');
   const [isCompletingOpen, setIsCompletingOpen] = useState(false);
+  const [completionError, setCompletionError] = useState('');
+  const [isSubmittingCompletion, setIsSubmittingCompletion] = useState(false);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -548,15 +550,16 @@ export const DemandDetailModal: React.FC = () => {
 
   const handleCompleteSubmit = async () => {
     if (!completionSummary.trim()) return;
+    setCompletionError('');
+    setIsSubmittingCompletion(true);
     try {
       await completeDemand(selectedDemand.id, completionSummary.trim());
       setIsCompletingOpen(false);
+      setCompletionSummary('');
     } catch (error) {
-      showToast({
-        type: 'error',
-        title: 'Demanda não concluída',
-        message: error instanceof Error ? error.message : 'Não foi possível concluir a demanda.'
-      });
+      setCompletionError(error instanceof Error ? error.message : 'Não foi possível concluir a demanda. Verifique os requisitos e tente novamente.');
+    } finally {
+      setIsSubmittingCompletion(false);
     }
   };
 
@@ -640,7 +643,7 @@ export const DemandDetailModal: React.FC = () => {
             {!isCompleted && (
               <>
                 <button
-                  onClick={() => setIsCompletingOpen(true)}
+                  onClick={() => { setCompletionError(''); setIsCompletingOpen(true); }}
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center space-x-1 shadow-sm transition-all"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
@@ -684,22 +687,30 @@ export const DemandDetailModal: React.FC = () => {
             <textarea
               rows={2}
               value={completionSummary}
-              onChange={(e) => setCompletionSummary(e.target.value)}
+              onChange={(e) => { setCompletionSummary(e.target.value); setCompletionError(''); }}
               placeholder="Ex: Todas as funcionalidades foram testadas e validadas em produção com sucesso..."
               className="w-full p-2 text-xs rounded-lg border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
             />
+            {completionError && (
+              <div role="alert" aria-live="assertive" className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/60 dark:text-red-200">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div><strong className="block">Não foi possível concluir</strong><span>{completionError}</span></div>
+              </div>
+            )}
             <div className="flex items-center justify-end space-x-2">
               <button
-                onClick={() => setIsCompletingOpen(false)}
+                onClick={() => { setCompletionError(''); setIsCompletingOpen(false); }}
+                disabled={isSubmittingCompletion}
                 className="px-3 py-1 text-xs rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleCompleteSubmit}
-                className="px-3 py-1 text-xs rounded font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                disabled={isSubmittingCompletion || !completionSummary.trim()}
+                className="px-3 py-1 text-xs rounded font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Confirmar Conclusão
+                {isSubmittingCompletion ? 'Concluindo...' : 'Confirmar Conclusão'}
               </button>
             </div>
           </div>

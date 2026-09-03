@@ -615,6 +615,49 @@ describe.skipIf(!run)("contratos mutáveis PostgreSQL", () => {
     });
   });
 
+  it("permite conclusão dedicada a partir de status ativo sem liberar a edição genérica", async () => {
+    const { agent, token } = await authenticated(app);
+    const created = await agent
+      .post("/api/v1/demands")
+      .set("X-CSRF-Token", token)
+      .send({
+        title: "Conclusão dedicada",
+        description: "",
+        statusId: "status-nova",
+        priorityId: "normal",
+        categoryId: "tarefa",
+      })
+      .expect(201);
+    await agent
+      .patch(`/api/v1/demands/${created.body.id}`)
+      .set("X-CSRF-Token", token)
+      .send({ version: created.body.version, statusId: "status-concluida" })
+      .expect(409);
+    const checklist = created.body.checklist.map(
+      (item: { id: string; title: string }) => ({ ...item, completed: true }),
+    );
+    const ready = await agent
+      .patch(`/api/v1/demands/${created.body.id}`)
+      .set("X-CSRF-Token", token)
+      .send({ version: created.body.version, checklist })
+      .expect(200);
+    const completed = await agent
+      .post(`/api/v1/demands/${created.body.id}/complete`)
+      .set("X-CSRF-Token", token)
+      .send({
+        statusId: "status-concluida",
+        summary: "Checklist validado pelo fluxo dedicado",
+        version: ready.body.version,
+      })
+      .expect(200);
+    expect(completed.body.demand).toMatchObject({
+      id: created.body.id,
+      statusId: "status-concluida",
+      progressPercent: 100,
+      completionSummary: "Checklist validado pelo fluxo dedicado",
+    });
+  });
+
   it("padroniza validação, recurso inexistente e conflito", async () => {
     const { agent, token } = await authenticated(app);
     const invalid = await agent

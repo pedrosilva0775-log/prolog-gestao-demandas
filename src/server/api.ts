@@ -1612,6 +1612,7 @@ export const createApiRouter = (
           input.statusId,
           String(res.locals.moduleRole),
           input.override,
+          "completion",
         );
         if (transition.target.category !== "completed")
           throw Object.assign(
