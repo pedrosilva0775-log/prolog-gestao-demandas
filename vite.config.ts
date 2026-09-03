@@ -25,6 +25,7 @@ export default defineConfig(() => {
           manualChunks(id) {
             if (id.includes('/src/data/initialData')) return 'initial-data';
             if (id.includes('/node_modules/react') || id.includes('/node_modules/scheduler')) return 'react-vendor';
+            if (id.includes('/node_modules/zod')) return 'validation-vendor';
             if (id.includes('/node_modules/recharts') || id.includes('/node_modules/d3-')) return 'charts-vendor';
             if (id.includes('/node_modules/lucide-react')) return 'icons-vendor';
             if (id.includes('/node_modules/motion')) return 'motion-vendor';

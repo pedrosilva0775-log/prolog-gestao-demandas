@@ -8,8 +8,8 @@ import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
 import { Demand } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
-import { ClientModal, ClientRecord } from './ClientModal';
-import { apiClient } from '../../services/apiClient';
+import { ClientModal } from './ClientModal';
+import { useClients } from '../../context/ClientsContext';
 import { DEFAULT_CHECKLIST_TEXT } from '../../data/defaultChecklist';
 import { toLocalDateInput } from '../../utils/date';
 import { MotionButton } from '../motion/MotionButton';
@@ -37,6 +37,7 @@ const defaultDueInput = () => toLocalDateInput(new Date(Date.now() + 7 * 8640000
 const defaultChecklist = DEFAULT_CHECKLIST_TEXT;
 
 export const CreateDemandModal: React.FC = () => {
+  const { clients } = useClients();
   const reduceMotion = useReducedMotion();
   const {
     isCreateModalOpen,
@@ -58,7 +59,6 @@ export const CreateDemandModal: React.FC = () => {
   const [teamId, setTeamId] = useState(teams[0]?.id || 'team-dev');
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<ClientRecord[]>([]);
   const [clientSearch, setClientSearch] = useState('');
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -93,15 +93,6 @@ export const CreateDemandModal: React.FC = () => {
       setSpeechSupported(false);
     }
   }, []);
-
-  useEffect(() => {
-    const loadClients = () => { apiClient.clients().then(setClients).catch(() => setClients([])); };
-    if (isCreateModalOpen) {
-      loadClients();
-    }
-    window.addEventListener('prolog:clients-updated', loadClients);
-    return () => window.removeEventListener('prolog:clients-updated', loadClients);
-  }, [isCreateModalOpen]);
 
   // Stop speech recognition when modal closes or unmounts
   useEffect(() => {
@@ -276,22 +267,19 @@ export const CreateDemandModal: React.FC = () => {
       priorityId,
       teamId,
       assigneeId,
-      requesterId: currentUser.id,
       clientId: clientId || undefined,
       clientName: clients.find(client => client.id === clientId)?.company,
       dueDate,
       plannedStartDate,
-      whatDescription: whatDescription.trim() || title.trim(),
+      description: whatDescription.trim() || title.trim(),
       whyReason: whyReason.trim(),
       whereLocation: whereLocation.trim() || 'Ambiente Corporativo Geral',
       howExecutionGuide: howExecutionGuide.trim() || 'Seguir diretrizes técnicas padrão da equipe.',
       statusId: statuses[0]?.id || 'st-nova',
       progressPercent: 0,
       tags: ['Nova', categories.find((c) => c.id === categoryId)?.name || 'Demanda'],
-      checklist: checklistItems,
-      comments: [],
-      attachments: []
-    } as any); resetForm(); setIsCreateModalOpen(false); }
+      checklist: checklistItems
+    }); resetForm(); setIsCreateModalOpen(false); }
     catch (error) { showToast({type:'error',title:'Demanda não criada',message:error instanceof Error?error.message:'Não foi possível salvar a demanda.'}); }
     finally { setIsSaving(false); }
   };
@@ -707,6 +695,6 @@ export const CreateDemandModal: React.FC = () => {
     </motion.div>
     )}
     </AnimatePresence>
-    <ClientModal isOpen={isClientModalOpen} onClose={() => setIsClientModalOpen(false)} onCreated={client => { setClients(previous => [...previous.filter(item => item.id !== client.id), client]); setClientId(client.id); setClientSearch(client.company); showToast({type:'success',title:'Cliente cadastrado',message:`${client.company} foi selecionado nesta demanda.`}); }} />
+    <ClientModal isOpen={isClientModalOpen} onClose={() => setIsClientModalOpen(false)} onCreated={client => { setClientId(client.id); setClientSearch(client.company); showToast({type:'success',title:'Cliente cadastrado',message:`${client.company} foi selecionado nesta demanda.`}); }} />
   </>;
 };

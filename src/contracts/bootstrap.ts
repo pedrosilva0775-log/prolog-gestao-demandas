@@ -1,0 +1,10 @@
+import { z } from 'zod';
+import { clientDtoSchema } from './clients';
+import { demandDtoSchema } from './demands';
+import { identifierSchema } from './common';
+import { teamDtoSchema } from './teams';
+import { publicUserDtoSchema } from './users'; import { configurationsDtoSchema } from './configurations';
+const bootstrapAuditSchema=z.object({id:identifierSchema,action:z.string(),userId:z.string(),userName:z.string(),timestamp:z.string(),details:z.string().optional(),demandId:z.string().optional(),demandCode:z.string().optional()});
+export const bootstrapResponseSchema=z.object({currentUserId:identifierSchema,effectivePermissions:z.array(z.string()).default([]),users:z.array(publicUserDtoSchema),teams:z.array(teamDtoSchema),clients:z.array(clientDtoSchema),demands:z.array(demandDtoSchema),auditLogs:z.array(bootstrapAuditSchema).default([]),configurations:configurationsDtoSchema});
+export type PublicUserDto=z.infer<typeof publicUserDtoSchema>;
+export type BootstrapResponse=z.infer<typeof bootstrapResponseSchema>;

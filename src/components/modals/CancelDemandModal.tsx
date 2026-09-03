@@ -67,9 +67,7 @@ export const CancelDemandModal: React.FC<CancelDemandModalProps> = ({
       await updateDemand(
         demand.id,
         {
-          statusId: cancelledStatus.id,
-          updatedAt: new Date().toISOString(),
-          updatedByUserId: currentUser.id
+          statusId: cancelledStatus.id
         },
         `Cancelamento de demanda: ${fullReason}`
       );

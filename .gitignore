@@ -7,6 +7,9 @@ dist/
 coverage/
 uploads/
 .test-uploads/
+.test-uploads-*/
+.test-backups/
+.test-restore/
 backups/
 .DS_Store
 *.log

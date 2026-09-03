@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Building2, X } from 'lucide-react';
-import { apiClient } from '../../services/apiClient';
+import type { ClientDto } from '../../contracts';
+import { useClients } from '../../context/ClientsContext';
 
-export type ClientRecord = { id: string; name: string; company: string; email: string; phone: string | null; active: boolean; legal_basis?: string | null; retention_until?: string | null; created_at?: string; updated_at?: string };
+export type ClientRecord = ClientDto;
 type Props = { isOpen: boolean; onClose: () => void; onCreated?: (client: ClientRecord) => void; onSaved?: (client: ClientRecord) => void; clientToEdit?: ClientRecord | null };
 
 export const ClientModal: React.FC<Props> = ({ isOpen, onClose, onCreated, onSaved, clientToEdit }) => {
+  const { createClient, updateClient } = useClients();
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
   const [email, setEmail] = useState('');
@@ -21,8 +23,7 @@ export const ClientModal: React.FC<Props> = ({ isOpen, onClose, onCreated, onSav
     event.preventDefault(); setSaving(true); setError('');
     try {
       const payload = { name: name.trim(), company: company.trim(), email: email.trim().toLowerCase(), phone: phone.trim(), active: clientToEdit?.active ?? true };
-      const client = clientToEdit ? await apiClient.updateClient(clientToEdit.id, payload) as ClientRecord : await apiClient.createClient(payload) as ClientRecord;
-      window.dispatchEvent(new CustomEvent('prolog:clients-updated'));
+      const client = clientToEdit ? await updateClient(clientToEdit.id, payload) : await createClient(payload);
       clientToEdit ? onSaved?.(client) : onCreated?.(client); onClose();
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar o cliente.'); }
     finally { setSaving(false); }

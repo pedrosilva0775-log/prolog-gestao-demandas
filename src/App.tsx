@@ -9,6 +9,10 @@ import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { AuthGate } from './components/auth/AuthGate';
 import { isViewEnabled } from './config/views';
+import { ModuleProvider } from './context/ModuleContext';
+import { DemandsProvider, useDemands } from './context/DemandsContext';
+import { ClientsProvider } from './context/ClientsContext';
+import { TeamsProvider } from './context/TeamsContext';
 
 // Enterprise Roadmap Views
 const viewLoaders = {
@@ -20,6 +24,7 @@ const viewLoaders = {
   teams: () => import('./components/admin/TeamsManagement'),
   categories: () => import('./components/admin/CategoriesConfig'),
   audit: () => import('./components/admin/AuditLogsView'),
+  modules: () => import('./components/admin/ModulesManagement'),
 };
 
 const KanbanBoard = lazy(() => viewLoaders.kanban().then(module => ({ default: module.KanbanBoard })));
@@ -30,6 +35,7 @@ const ExecutiveReport = lazy(() => viewLoaders.executiveReport().then(module => 
 const TeamsManagement = lazy(() => viewLoaders.teams().then(module => ({ default: module.TeamsManagement })));
 const CategoriesConfig = lazy(() => viewLoaders.categories().then(module => ({ default: module.CategoriesConfig })));
 const AuditLogsView = lazy(() => viewLoaders.audit().then(module => ({ default: module.AuditLogsView })));
+const ModulesManagement = lazy(() => viewLoaders.modules().then(module => ({ default: module.ModulesManagement })));
 
 // Modals
 import { DemandDetailModal } from './components/modals/DemandDetailModal';
@@ -42,6 +48,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { MOTION_EASE_OUT } from './components/motion/presets';
 
 const AppContent: React.FC = () => {
+  const { conflict, reloadDemands, clearConflict } = useDemands();
   const {
     activeView,
     isCreateModalOpen,
@@ -139,6 +146,8 @@ const AppContent: React.FC = () => {
         return <CategoriesConfig />;
       case 'audit_logs':
         return <AuditLogsView />;
+      case 'modules_management':
+        return <ModulesManagement />;
       
       default:
         return <KanbanBoard />;
@@ -153,6 +162,7 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-blue-500 selection:text-white">
+      {conflict && <div role="alert" aria-live="assertive" className="fixed left-1/2 top-3 z-[80] w-[min(94vw,42rem)] -translate-x-1/2 rounded-xl border border-amber-300 bg-amber-50 p-4 shadow-xl text-amber-950"><p className="font-bold">Esta demanda foi alterada em outra sessão.</p><p className="mt-1 text-sm">{conflict.message}</p><div className="mt-3 flex gap-2"><button onClick={async()=>{await reloadDemands();clearConflict();}} className="rounded-lg bg-amber-900 px-3 py-2 text-sm font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">Recarregar dados</button><button onClick={clearConflict} className="rounded-lg border border-amber-400 px-3 py-2 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">Fechar aviso</button></div></div>}
       {/* Toast Notification Container */}
       <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-sm pointer-events-none">
         <AnimatePresence initial={false}>
@@ -249,9 +259,7 @@ const AppContent: React.FC = () => {
 export function App() {
   return (
     <AuthGate>
-      <AppProvider>
-        <AppContent />
-      </AppProvider>
+      <ModuleProvider><ClientsProvider><TeamsProvider><DemandsProvider><AppProvider><AppContent /></AppProvider></DemandsProvider></TeamsProvider></ClientsProvider></ModuleProvider>
     </AuthGate>
   );
 }

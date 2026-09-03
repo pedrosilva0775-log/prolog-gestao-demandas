@@ -49,14 +49,13 @@ import {
 } from 'lucide-react';
 import { CancelDemandModal } from './CancelDemandModal';
 import { formatCalendarDate, toLocalDateInput } from '../../utils/date';
-import { apiClient } from '../../services/apiClient';
-
-type EditableClient = { id: string; name: string; company: string; active: boolean };
+import { useClients } from '../../context/ClientsContext';
 
 const todayInput=()=>toLocalDateInput();
 const defaultDueInput=()=>toLocalDateInput(new Date(Date.now()+7*86400000));
 
 export const DemandDetailModal: React.FC = () => {
+  const { clients } = useClients();
   const {
     selectedDemand,
     setSelectedDemand,
@@ -125,7 +124,6 @@ export const DemandDetailModal: React.FC = () => {
   const [editTeamId, setEditTeamId] = useState(selectedDemand?.teamId || '');
   const [editAssigneeId, setEditAssigneeId] = useState(selectedDemand?.assigneeId || '');
   const [editClientId, setEditClientId] = useState(selectedDemand?.clientId || '');
-  const [clients, setClients] = useState<EditableClient[]>([]);
   const [editDueDate, setEditDueDate] = useState(selectedDemand?.dueDate?.slice(0, 10) || defaultDueInput());
   const [editPlannedStartDate, setEditPlannedStartDate] = useState(selectedDemand?.plannedStartDate?.slice(0, 10) || todayInput());
   const [editWhat, setEditWhat] = useState(selectedDemand?.whatDescription || selectedDemand?.description || '');
@@ -293,11 +291,6 @@ export const DemandDetailModal: React.FC = () => {
     setNewDueDate(selectedDemand.dueDate);
   }, [selectedDemand]);
 
-  useEffect(() => {
-    if (!selectedDemand) return;
-    apiClient.clients().then((items: EditableClient[]) => setClients(items)).catch(() => setClients([]));
-  }, [selectedDemand?.id]);
-
   if (!selectedDemand) return null;
 
   const hasPendingEditChanges = Boolean(selectedDemand) && (
@@ -347,7 +340,6 @@ export const DemandDetailModal: React.FC = () => {
         clientName: clients.find(client => client.id === editClientId)?.company || '',
         dueDate: editDueDate,
         plannedStartDate: editPlannedStartDate,
-        whatDescription: editWhat.trim(),
         description: editWhat.trim(),
         whyReason: editWhy.trim(),
         whereLocation: editWhere.trim(),
@@ -554,10 +546,18 @@ export const DemandDetailModal: React.FC = () => {
     setExtensionReason('');
   };
 
-  const handleCompleteSubmit = () => {
+  const handleCompleteSubmit = async () => {
     if (!completionSummary.trim()) return;
-    completeDemand(selectedDemand.id, completionSummary.trim());
-    setIsCompletingOpen(false);
+    try {
+      await completeDemand(selectedDemand.id, completionSummary.trim());
+      setIsCompletingOpen(false);
+    } catch (error) {
+      showToast({
+        type: 'error',
+        title: 'Demanda não concluída',
+        message: error instanceof Error ? error.message : 'Não foi possível concluir a demanda.'
+      });
+    }
   };
 
   const handleDelete = () => setIsDeleteConfirmOpen(true);
@@ -601,8 +601,8 @@ export const DemandDetailModal: React.FC = () => {
               <AppSelect
                 value={selectedDemand.statusId}
                 onChange={(e) => moveDemandStatus(selectedDemand.id, e.target.value)}
-                disabled={Boolean(selectedDemand.blocker?.isBlocked && selectedDemand.blocker.kind !== 'impediment')}
-                title={selectedDemand.blocker?.isBlocked && selectedDemand.blocker.kind !== 'impediment' ? 'Resolva o bloqueio antes de alterar o status' : undefined}
+                disabled={isCompleted || Boolean(selectedDemand.blocker?.isBlocked && selectedDemand.blocker.kind !== 'impediment')}
+                title={isCompleted ? 'Demandas concluídas não podem ser reabertas nesta versão.' : selectedDemand.blocker?.isBlocked && selectedDemand.blocker.kind !== 'impediment' ? 'Resolva o bloqueio antes de alterar o status' : undefined}
                 className="text-xs font-bold px-2 py-0.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {statuses.map((st) => (
@@ -611,6 +611,7 @@ export const DemandDetailModal: React.FC = () => {
                   </option>
                 ))}
               </AppSelect>
+              {isCompleted && <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Reabertura indisponível nesta versão.</span>}
             </div>
 
             <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">

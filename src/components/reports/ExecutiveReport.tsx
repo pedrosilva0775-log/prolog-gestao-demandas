@@ -13,6 +13,8 @@ import { DemandReportTemplate } from './DemandReportTemplate';
 import { IconRenderer } from '../common/IconRenderer';
 import { formatCalendarDate, isCalendarDateOverdue } from '../../utils/date';
 import { apiClient } from '../../services/apiClient';
+import type { Demand } from '../../types';
+import { useClients } from '../../context/ClientsContext';
 import { ReportBuilderDrawer } from './ReportBuilderDrawer';
 import { ExecutiveOverviewReportV2 as ExecutiveOverviewReport } from './ExecutiveOverviewReportV2';
 import { MotionButton } from '../motion/MotionButton';
@@ -44,9 +46,8 @@ import {
 } from 'lucide-react';
 
 export const ExecutiveReport: React.FC = () => {
+  const { clients: allClients } = useClients();
   const {
-    demands,
-    filteredDemands,
     users,
     teams,
     categories,
@@ -67,28 +68,19 @@ export const ExecutiveReport: React.FC = () => {
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
-  const [clients, setClients] = useState<Array<{ id: string; name: string; company: string; active: boolean }>>([]);
+  const clients = useMemo(() => allClients.filter(client => client.active), [allClients]);
   const [periodSelection, setPeriodSelection] = useState<string>('current_quarter');
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [reportConfig, setReportConfig] = useState<ReportConfiguration>(() => createDefaultReportConfiguration(statuses, categories));
   const [reportPresets, setReportPresets] = useState<ReportPreset[]>([]);
+  const [reportDemands, setReportDemands] = useState<Demand[]>([]);
+  const [reportLoading, setReportLoading] = useState(true);
+  const [reportError, setReportError] = useState<string | null>(null);
   const configurationBeforeOpen = useRef<ReportConfiguration | null>(null);
 
   const now = new Date();
 
   // Compute selected issuer name & role
-  useEffect(() => {
-    let active = true;
-    apiClient.clients()
-      .then((items) => {
-        if (active) setClients(items.filter((client: { active: boolean }) => client.active));
-      })
-      .catch(() => {
-        if (active) setClients([]);
-      });
-    return () => { active = false; };
-  }, []);
-
   useEffect(() => {
     if (!reportConfig.statusIds.length && statuses.length) setReportConfig(createDefaultReportConfiguration(statuses, categories));
   }, [statuses, categories]);
@@ -144,31 +136,25 @@ export const ExecutiveReport: React.FC = () => {
   }, [periodSelection]);
   const periodText = periodRange.label;
 
-  // Filter demands based on user/team selection
-  const reportDemands = useMemo(() => {
-    return demands.filter((d) => {
-      // User filter (assignee or requester)
-      if (selectedUserIds.length && !selectedUserIds.includes(d.assigneeId) && !selectedUserIds.includes(d.requesterId)) return false;
-
-      // Team filter
-      if (selectedTeamIds.length && !selectedTeamIds.includes(d.teamId)) return false;
-
-      if (selectedClientIds.length) {
-        const matchesClient = d.clientId ? selectedClientIds.includes(d.clientId) : selectedClientIds.includes('__internal__');
-        if (!matchesClient) return false;
-      }
-
-      if (periodRange.start && periodRange.end) {
-        const inRange=(value?:string)=>{if(!value)return false;const date=new Date(value);return date>=periodRange.start!&&date<periodRange.end!;};
-        if (!inRange(d.createdAt) && !inRange(`${d.dueDate}T12:00:00`) && !inRange(d.completedAt)) return false;
-      }
-
-      if (!reportConfig.statusIds.includes(d.statusId) || !reportConfig.categoryIds.includes(d.categoryId)) return false;
-      if (reportConfig.priorityIds.length && !reportConfig.priorityIds.includes(d.priorityId)) return false;
-
-      return true;
-    });
-  }, [demands, selectedUserIds, selectedTeamIds, selectedClientIds, periodRange, reportConfig]);
+  useEffect(() => {
+    let current = true;
+    setReportLoading(true);
+    setReportError(null);
+    setReportDemands([]);
+    void apiClient.reportDemands({
+      statusIds: reportConfig.statusIds,
+      categoryIds: reportConfig.categoryIds,
+      priorityIds: reportConfig.priorityIds.length ? reportConfig.priorityIds : undefined,
+      userIds: selectedUserIds.length ? selectedUserIds : undefined,
+      teamIds: selectedTeamIds.length ? selectedTeamIds : undefined,
+      clientIds: selectedClientIds.length ? selectedClientIds : undefined,
+      startDate: periodRange.start?.toISOString(),
+      endDate: periodRange.end?.toISOString(),
+    }).then(items => { if (current) setReportDemands(items); }).catch(() => {
+      if (current) setReportError('Não foi possível carregar o relatório completo. Tente novamente.');
+    }).finally(() => { if (current) setReportLoading(false); });
+    return () => { current = false; };
+  }, [reportConfig.statusIds, reportConfig.categoryIds, reportConfig.priorityIds, selectedUserIds, selectedTeamIds, selectedClientIds, periodRange]);
 
   // Separate metrics for 5W2H view
   const pendingDemands = reportDemands.filter((d) => {
@@ -192,7 +178,7 @@ export const ExecutiveReport: React.FC = () => {
 
   const openBuilder=()=>{configurationBeforeOpen.current=structuredClone(reportConfig);setIsBuilderOpen(true);};
   const cancelBuilder=()=>{if(configurationBeforeOpen.current)setReportConfig(configurationBeforeOpen.current);setIsBuilderOpen(false);};
-  const savePreset=async(name:string)=>{const saved=await apiClient.saveReportPreset(name,reportConfig) as ReportPreset;setReportPresets(previous=>[saved,...previous.filter(item=>item.id!==saved.id&&item.name!==saved.name)]);showToast({type:'success',title:'Configuração salva',message:`O preset "${saved.name}" foi salvo no banco de dados.`});};
+  const savePreset=async(name:string)=>{const saved=await apiClient.saveReportPreset(name,reportConfig);setReportPresets(previous=>[saved,...previous.filter(item=>item.id!==saved.id&&item.name!==saved.name)]);showToast({type:'success',title:'Configuração salva',message:`O preset "${saved.name}" foi salvo no banco de dados.`});};
 
   const handleExportPng = async () => {
     try {
@@ -274,6 +260,9 @@ export const ExecutiveReport: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12 font-sans">
+      <div aria-live="polite" className="sr-only">{reportLoading ? 'Carregando relatório completo.' : reportError ?? `Relatório carregado com ${reportDemands.length} demandas.`}</div>
+      {reportLoading && <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true"/>Carregando o conjunto completo do relatório…</div>}
+      {reportError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{reportError}</div>}
       {/* 1. Control & Filter Ribbon (Non-printable) */}
       <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 no-export print:hidden">
         {/* Top bar: Title + View Tabs + Action Buttons */}
@@ -375,12 +364,12 @@ export const ExecutiveReport: React.FC = () => {
             <MultiSelectDropdown
               values={selectedUserIds}
               onChange={setSelectedUserIds}
-              allLabel={`Todos os Usuários (${demands.length} demandas)`}
+              allLabel={`Todos os Usuários (${reportDemands.length} demandas)`}
               ariaLabel="Filtrar por usuários"
               options={users.map(user => ({
                 value: user.id,
                 label: user.name,
-                description: `${user.roleTitle} · ${demands.filter(demand => demand.assigneeId === user.id || demand.requesterId === user.id).length} demandas`,
+                description: user.roleTitle,
               }))}
             />
           </div>
@@ -399,7 +388,7 @@ export const ExecutiveReport: React.FC = () => {
               options={teams.map(team => ({
                 value: team.id,
                 label: team.name,
-                description: `${demands.filter(demand => demand.teamId === team.id).length} demandas`,
+                description: 'Equipe disponível no módulo',
               }))}
             />
           </div>
@@ -419,12 +408,12 @@ export const ExecutiveReport: React.FC = () => {
                 {
                   value: '__internal__',
                   label: 'Solicitação interna / sem cliente',
-                  description: `${demands.filter(demand => !demand.clientId).length} demandas`,
+                  description: 'Demandas sem cliente associado',
                 },
                 ...clients.map(client => ({
                   value: client.id,
                   label: client.company,
-                  description: `${client.name} · ${demands.filter(demand => demand.clientId === client.id).length} demandas`,
+                  description: client.name,
                 })),
               ]}
             />

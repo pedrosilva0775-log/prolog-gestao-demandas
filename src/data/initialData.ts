@@ -434,6 +434,8 @@ export const INITIAL_PRIORITIES: PriorityConfig[] = [
 export const INITIAL_DEMANDS: Demand[] = [
   {
     id: 'dem-001',
+    moduleId: 'mod-default',
+    version: 1,
     code: 'DEM-2026-001',
     title: 'Migração do Core ERP para Infraestrutura Cloud Híbrida',
     description: 'Modernização da arquitetura do ERP corporativo para garantir alta disponibilidade (99.99%) e reduzir a latência das unidades fabris.',
@@ -529,6 +531,8 @@ export const INITIAL_DEMANDS: Demand[] = [
   },
   {
     id: 'dem-002',
+    moduleId: 'mod-default',
+    version: 1,
     code: 'DEM-2026-002',
     title: 'Automatização de Roteirização e Rastreamento Logístico',
     description: 'Implementação de algoritmo de roteirização dinâmica com geolocalização em tempo real para frotas de entrega urbana.',
@@ -598,6 +602,8 @@ export const INITIAL_DEMANDS: Demand[] = [
   },
   {
     id: 'dem-003',
+    moduleId: 'mod-default',
+    version: 1,
     code: 'DEM-2026-003',
     title: 'Portal de Autoatendimento e Onboarding Digital de Novos Colaboradores',
     description: 'Plataforma integrada para envio de documentação trabalhista, assinatura digital e trilha de integração de novos contratados.',
@@ -675,6 +681,8 @@ export const INITIAL_DEMANDS: Demand[] = [
   },
   {
     id: 'dem-004',
+    moduleId: 'mod-default',
+    version: 1,
     code: 'DEM-2026-004',
     title: 'Adequação dos Relatórios Gerenciais à Nova Instrução Normativa CVM 193 (ESG)',
     description: 'Parametrização contábil no módulo financeiro para geração automatizada do balanço de sustentabilidade e métricas de emissão de carbono.',
@@ -744,6 +752,8 @@ export const INITIAL_DEMANDS: Demand[] = [
   },
   {
     id: 'dem-005',
+    moduleId: 'mod-default',
+    version: 1,
     code: 'DEM-2026-005',
     title: 'Auditoria de Segurança da Informação e Pentest nas APIs Públicas',
     description: 'Execução de testes de intrusão, revisão de código estático (SAST) e auditoria de permissões RBAC nas APIs de integração de clientes.',
@@ -821,6 +831,8 @@ export const INITIAL_DEMANDS: Demand[] = [
   },
   {
     id: 'dem-006',
+    moduleId: 'mod-default',
+    version: 1,
     code: 'DEM-2026-006',
     title: 'Implementação de Sensores IoT para Manutenção Preditiva na Linha 3',
     description: 'Instalação de sensores de vibração e temperatura nos motores da esteira principal para alertar anomalias antes da quebra.',

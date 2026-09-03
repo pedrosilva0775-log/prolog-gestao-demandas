@@ -304,6 +304,8 @@ export interface RiskItem {
 // Full 5W2H Demand Model
 export interface Demand {
   id: string;
+  moduleId: string;
+  version: number;
   code: string; // e.g. DEM-2026-001
   title: string; // O que (What)
   description: string; // Detalhamento
@@ -823,6 +825,7 @@ export type ActiveView =
   | 'improvements'
   | 'tasks'
   | 'teams_management'
+  | 'modules_management'
   | 'categories_config'
   | 'status_config'
   | 'priorities_config'

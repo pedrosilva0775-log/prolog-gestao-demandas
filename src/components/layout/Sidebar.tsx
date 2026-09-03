@@ -19,6 +19,7 @@ import {
   Sliders,
   ShieldCheck,
   Cloud,
+  Boxes,
   ChevronDown,
   X,
 } from 'lucide-react';
@@ -35,6 +36,7 @@ export const Sidebar: React.FC = () => {
     isSidebarCollapsed,
     toggleSidebarCollapse,
     hasPermission,
+    currentUser,
   } = useApp();
 
   const sidebarRef = useRef<HTMLElement>(null);
@@ -104,6 +106,7 @@ export const Sidebar: React.FC = () => {
   ];
 
   const adminNavItems = [
+    ...(currentUser.role==='admin' ? [{ id: 'modules_management' as ActiveView, label: 'Módulos Operacionais', icon: Boxes }] : []),
     ...(features.googleWorkspace && hasPermission('google_workspace', 'read') ? [{
       id: 'google_integrations' as ActiveView,
       label: 'Google Workspace',

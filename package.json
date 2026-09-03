@@ -20,9 +20,10 @@
     "retention:enforce": "tsx scripts/enforce-retention.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:create-admin": "tsx scripts/create-admin.ts",
+    "attachments:inventory": "tsx scripts/inventory-attachments.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:integration": "cross-env RUN_DB_TESTS=true UPLOAD_DIR=.test-uploads node --env-file=.env node_modules/vitest/vitest.mjs run src/server/app.integration.test.ts"
+    "test:integration": "cross-env RUN_DB_TESTS=true UPLOAD_DIR=.test-uploads node --env-file=.env node_modules/vitest/vitest.mjs run --no-file-parallelism src/server/app.integration.test.ts src/server/contracts.integration.test.ts src/server/adminUsers.integration.test.ts src/server/attachments.integration.test.ts src/server/attachments.backfill.integration.test.ts src/server/attachments.pending.integration.test.ts src/server/attachments.inventory.integration.test.ts src/server/externalRequestsDisabled.integration.test.ts src/server/externalRequests.integration.test.ts src/server/dashboard.integration.test.ts"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
@@ -59,5 +60,8 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "qs": "6.16.0"
   }
 }

@@ -12,7 +12,7 @@ import { DropdownSelect } from '../common/DropdownSelect';
 import { staggerContainer, staggerItem } from '../motion/presets';
 import { ActiveView, Demand, StatusConfig } from '../../types';
 import { StatusModal } from '../modals/StatusModal';
-import { apiClient } from '../../services/apiClient';
+import { useClients } from '../../context/ClientsContext';
 import {
   Plus,
   SlidersHorizontal,
@@ -30,6 +30,10 @@ import {
 } from 'lucide-react';
 
 export const KanbanBoard: React.FC = () => {
+  // O seletor de status permanece disponível. O gesto volta somente depois de
+  // cobrir rollback visual, concorrência e conclusão em E2E.
+  const dragAndDropEnabled = false;
+  const { clients } = useClients();
   const reduceMotion = useReducedMotion();
   const {
     filteredDemands,
@@ -57,7 +61,6 @@ export const KanbanBoard: React.FC = () => {
   const [activeMenuStatusId, setActiveMenuStatusId] = useState<string | null>(null);
   const [pointerDrag, setPointerDrag] = useState<{ demand: Demand; x: number; y: number; targetStatusId: string | null } | null>(null);
   const [droppedDemandId, setDroppedDemandId] = useState<string | null>(null);
-  const [clients, setClients] = useState<Array<{ id: string; company: string; name: string; active: boolean }>>([]);
   const boardScrollRef = useRef<HTMLDivElement>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
   const latestDragXRef = useRef(0);
@@ -94,21 +97,6 @@ export const KanbanBoard: React.FC = () => {
         })),
     ];
   }, [clients]);
-
-  useEffect(() => {
-    let active = true;
-    const loadClients = () => {
-      apiClient.clients()
-        .then(data => { if (active) setClients(data); })
-        .catch(() => { if (active) setClients([]); });
-    };
-    loadClients();
-    window.addEventListener('prolog:clients-updated', loadClients);
-    return () => {
-      active = false;
-      window.removeEventListener('prolog:clients-updated', loadClients);
-    };
-  }, []);
 
   const handleScopeChange = (viewId: ActiveView) => {
     const categoryCode = viewId === 'projects' ? 'PROJETO' : viewId === 'improvements' ? 'MELHORIA' : viewId === 'tasks' ? 'TAREFA' : null;
@@ -438,10 +426,10 @@ export const KanbanBoard: React.FC = () => {
                     categories={categories}
                     priorities={priorities}
                     statuses={statuses}
-                    allowDrag={isStatusBoard}
+                    allowDrag={dragAndDropEnabled && isStatusBoard}
                     isDragging={pointerDrag?.demand.id === demand.id}
                     isDropping={droppedDemandId === demand.id}
-                    onPointerDragStart={(event) => startPointerDrag(demand, event)}
+                    onPointerDragStart={dragAndDropEnabled ? (event) => startPointerDrag(demand, event) : undefined}
                     onClick={() => { if (Date.now() >= suppressCardClickUntilRef.current) setSelectedDemand(demand); }}
                     onStatusChange={(newStatusId) => moveDemandStatus(demand.id, newStatusId)}
                   />
@@ -451,7 +439,7 @@ export const KanbanBoard: React.FC = () => {
                 {columnDemands.length === 0 && (
                   <div className="h-32 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-400 dark:text-slate-600 text-xs select-none">
                     <p className="font-medium">Nenhuma demanda</p>
-                    <p className="text-[10px] mt-0.5">{isStatusBoard ? 'Arraste um cartão para cá' : 'Nenhum item neste agrupamento'}</p>
+                    <p className="text-[10px] mt-0.5">Nenhum item neste agrupamento</p>
                   </div>
                 )}
               </div>

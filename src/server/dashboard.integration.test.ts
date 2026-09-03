@@ -1,0 +1,29 @@
+import crypto from 'node:crypto';
+import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { statusConfigDtoSchema } from '../contracts/index.js';
+import { createApp } from './app.js';
+import { closeDatabase, getDatabase } from './database.js';
+import { hashPassword } from './password.js';
+
+const run=process.env.RUN_DB_TESTS==='true';
+describe.skipIf(!run)('indicadores agregados PostgreSQL',()=>{
+  const suffix=crypto.randomUUID();const userId=`metrics-user-${suffix}`;const marker=`Métrica ${suffix}`;const otherModule=`metrics-module-${suffix}`;let app:Awaited<ReturnType<typeof createApp>>;
+  beforeAll(async()=>{
+    const db=getDatabase(),now=new Date();
+    await db.insertInto('users').values({id:userId,email:`${userId}@test.local`,name:'Admin métricas sintético',password_hash:hashPassword('Metrics123'),role:'admin',role_title:'Admin',department:'Teste',branch:null,phone:null,avatar:null,active:true,force_password_change:false,deleted_at:null,password_changed_at:null,mfa_enabled:false,mfa_secret_encrypted:null,failed_mfa_attempts:0,locked_until:null,created_at:now,updated_at:now}).execute();
+    await db.insertInto('module_members').values({module_id:'mod-default',user_id:userId,role:'module_admin',active:true,created_by:userId,created_at:now,updated_at:now}).execute();
+    await db.insertInto('operational_modules').values({id:otherModule,name:'Outro módulo métricas',slug:`metricas-${suffix}`,description:'Isolamento',icon_key:'FolderKanban',color:'#2563eb',active:true,created_by:userId,version:1,deleted_at:null,created_at:now,updated_at:now}).execute();
+    const config=await db.selectFrom('module_configurations').select('value').where('module_id','=','mod-default').where('key','=','statuses').executeTakeFirstOrThrow();const statuses=statusConfigDtoSchema.array().parse(config.value);const open=statuses.find(item=>item.active&&item.category==='open')!;const completed=statuses.find(item=>item.active&&item.category==='completed')!;
+    const rows=Array.from({length:250},(_,index)=>{const done=index<100;const created=new Date(Date.UTC(2026,0,1+index%28));return {id:`metric-demand-${suffix}-${index}`,module_id:'mod-default',code:`MET-${suffix.slice(0,8)}-${index}`,title:`${marker} ${index}`,description:'Fixture agregada',status_id:done?completed.id:open.id,priority_id:index%2?'priority-a':'priority-b',category_id:index%3?'category-a':'category-b',requester_id:userId,assignee_id:userId,team_id:null,client_id:null,sprint_id:null,backlog_position:0,due_date:new Date('2026-02-01T00:00:00.000Z'),payload:{blocker:{isBlocked:index>=100&&index<125}},version:1,deleted_at:null,completed_at:done?new Date(created.getTime()+2*86400000):null,archived_at:null,created_at:created,updated_at:created};});
+    await db.insertInto('demands').values(rows).execute();await db.insertInto('demands').values({...rows[0],id:`metric-other-${suffix}`,module_id:otherModule,code:`MET-OTHER-${suffix.slice(0,8)}`}).execute();app=await createApp();
+  });
+  afterAll(async()=>{const db=getDatabase();await db.deleteFrom('demands').where('title','like',`${marker}%`).execute();await db.deleteFrom('demands').where('id','=',`metric-other-${suffix}`).execute();await db.deleteFrom('operational_modules').where('id','=',otherModule).execute();await closeDatabase();});
+  it('mantém totais independentes da página e isola outro módulo',async()=>{
+    const agent=request.agent(app);const config=await agent.get('/api/auth/config').expect(200);const cookie=String(config.headers['set-cookie']?.[0]??config.headers['set-cookie']??'');const csrf=decodeURIComponent(cookie.match(/prolog_csrf=([^;]+)/)?.[1]??'');await agent.post('/api/auth/login').set('X-CSRF-Token',csrf).send({email:`${userId}@test.local`,password:'Metrics123'}).expect(200);
+    const q=encodeURIComponent(marker);const page1=await agent.get(`/api/v1/modules/mod-default/demands?q=${q}&page=1&pageSize=100`).expect(200);const page2=await agent.get(`/api/v1/modules/mod-default/demands?q=${q}&page=2&pageSize=100`).expect(200);expect(page1.body.items).toHaveLength(100);expect(page2.body.items).toHaveLength(100);expect(page1.body.pagination.total).toBe(250);expect(page2.body.pagination.total).toBe(250);
+    const first=await agent.get(`/api/v1/modules/mod-default/demand-metrics?q=${q}&page=1&pageSize=100`).expect(200);const second=await agent.get(`/api/v1/modules/mod-default/demand-metrics?q=${q}&page=2&pageSize=100`).expect(200);expect(first.body).toEqual(second.body);expect(first.body).toMatchObject({total:250,completed:100,blocked:25});expect(first.body.byStatus.reduce((sum:number,item:{count:number})=>sum+item.count,0)).toBe(250);
+    const reportPage1=await agent.get('/api/v1/modules/mod-default/report-demands?page=1&pageSize=100').expect(200);const reportPage2=await agent.get('/api/v1/modules/mod-default/report-demands?page=2&pageSize=100').expect(200);expect(reportPage1.body.pagination.total).toBeGreaterThanOrEqual(250);expect(reportPage2.body.pagination.total).toBe(reportPage1.body.pagination.total);const reportFixtureCount=[...reportPage1.body.items,...reportPage2.body.items].filter((item:{title:string})=>item.title.startsWith(marker)).length;expect(reportFixtureCount).toBeGreaterThan(0);expect([...reportPage1.body.items,...reportPage2.body.items].some((item:{id:string})=>item.id===`metric-other-${suffix}`)).toBe(false);
+    const filteredReport=await agent.get(`/api/v1/modules/mod-default/report-demands?userIds=${userId}&startDate=2026-01-01T00:00:00.000Z&endDate=2026-02-01T00:00:00.000Z&pageSize=500`).expect(200);expect(filteredReport.body.items.filter((item:{title:string})=>item.title.startsWith(marker))).toHaveLength(250);expect(filteredReport.body.items.some((item:{id:string})=>item.id===`metric-other-${suffix}`)).toBe(false);
+  });
+});

@@ -23,10 +23,16 @@ export const logger = {
   error:(event:string,attributes?:Record<string,unknown>)=>write('error',event,attributes),
 };
 
+export const redactRequestPath = (requestPath: string) =>
+  requestPath.replace(
+    /((?:\/api\/public)?\/request-links\/)[^/?#]+/gi,
+    '$1[REDACTED]',
+  );
+
 export const requestLogger: RequestHandler = (req,res,next) => {
   const requestId=req.get('x-request-id')||crypto.randomUUID();
   const started=performance.now();
   res.setHeader('X-Request-Id',requestId);
-  res.on('finish',()=>{const durationMs=Math.round(performance.now()-started);recordHttpMetric(req.method,res.statusCode,durationMs);logger.info('http_request_completed',{requestId,method:req.method,path:req.path,statusCode:res.statusCode,durationMs,actorId:res.locals.session?.id});});
+  res.on('finish',()=>{const durationMs=Math.round(performance.now()-started);recordHttpMetric(req.method,res.statusCode,durationMs);logger.info('http_request_completed',{requestId,method:req.method,path:redactRequestPath(req.path),statusCode:res.statusCode,durationMs,actorId:res.locals.session?.id});});
   next();
 };

@@ -3,14 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { staggerContainer, staggerItem } from '../motion/presets';
 import { useApp } from '../../context/AppContext';
+import { useDemands } from '../../context/DemandsContext';
+import { apiClient } from '../../services/apiClient';
+import type { DemandMetrics } from '../../contracts';
 import { IconRenderer } from '../common/IconRenderer';
 import { AnimatedNumber } from '../common/AnimatedNumber';
 import { ExportService } from '../../services/exportService';
-import { formatCalendarDate, isCalendarDateOverdue, parseLocalCalendarDate } from '../../utils/date';
+import { formatCalendarDate, isCalendarDateOverdue } from '../../utils/date';
 import {
   ResponsiveContainer,
   PieChart,
@@ -25,7 +28,6 @@ import {
   CartesianGrid
 } from 'recharts';
 import {
-  TrendingUp,
   CheckCircle2,
   Clock,
   AlertTriangle,
@@ -41,9 +43,12 @@ import {
 } from 'lucide-react';
 
 export const ExecutiveDashboard: React.FC = () => {
+  const {query}=useDemands();
+  const [metrics,setMetrics]=useState<DemandMetrics|null>(null);
   const {
     demands,
     filteredDemands,
+    filters,
     statuses,
     priorities,
     categories,
@@ -60,38 +65,26 @@ export const ExecutiveDashboard: React.FC = () => {
   const chartAnimation = !reduceMotion;
 
   const now = new Date();
-  const total = filteredDemands.length;
+  const metricsQuery=useMemo(()=>({...query,page:1,q:filters.search||query.q,statusIds:filters.statusIds.length?filters.statusIds:query.statusIds,priorityIds:filters.priorityIds.length?filters.priorityIds:query.priorityIds,categoryIds:filters.categoryIds.length?filters.categoryIds:query.categoryIds,assigneeIds:filters.assigneeIds.length?filters.assigneeIds:query.assigneeIds,teamIds:filters.teamIds.length?filters.teamIds:query.teamIds,clientIds:filters.clientIds.length?filters.clientIds:query.clientIds}),[query,filters]);
+  useEffect(()=>{let active=true;setMetrics(null);apiClient.demandMetrics(metricsQuery).then(value=>{if(active)setMetrics(value);}).catch(()=>{if(active)setMetrics(null);});return()=>{active=false;};},[metricsQuery]);
+  const total = metrics?.total??0;
 
-  const completedDemands = filteredDemands.filter(
-    (d) => statuses.find((s) => s.id === d.statusId)?.category === 'completed'
-  );
-  const completedCount = completedDemands.length;
-
-  const blockedDemands = filteredDemands.filter(
-    (d) => d.blocker?.isBlocked || statuses.find((s) => s.id === d.statusId)?.category === 'blocked'
-  );
-  const blockedCount = blockedDemands.length;
+  const completedCount = metrics?.completed??0;
+  const blockedCount = metrics?.blocked??0;
 
   const overdueDemands = filteredDemands.filter((d) => {
     const isComp = statuses.find((s) => s.id === d.statusId)?.category === 'completed';
     const isCanc = statuses.find((s) => s.id === d.statusId)?.category === 'cancelled';
     return !isComp && !isCanc && isCalendarDateOverdue(d.dueDate, now);
   });
-  const overdueCount = overdueDemands.length;
+  const overdueCount = metrics?.overdue??0;
 
-  const inProgressCount = filteredDemands.filter(
-    (d) => statuses.find((s) => s.id === d.statusId)?.category === 'in_progress'
-  ).length;
+  const inProgressCount = metrics?.inProgress??0;
 
-  // SLA on-time rate calculation
-  const onTimeCompleted = completedDemands.filter((d) => {
-    if (!d.completedAt) return true;
-    return new Date(d.completedAt) <= parseLocalCalendarDate(d.dueDate, true);
-  }).length;
-  const slaOnTimeRate = completedCount > 0 ? Math.round((onTimeCompleted / completedCount) * 100) : 100;
+  const slaOnTimeRate = metrics?.onTimeRate??100;
 
   // Avg completion days
-  const avgCompletionDays = 4.8;
+  const avgCompletionDays = metrics?.averageCompletionDays??0;
 
   // Critical demands that require Board intervention or are blocked
   const criticalActionDemands = filteredDemands.filter(
@@ -104,37 +97,29 @@ export const ExecutiveDashboard: React.FC = () => {
   // Category Distribution Data
   const categoryData = categories.map((cat) => ({
     name: cat.name,
-    value: filteredDemands.filter((d) => d.categoryId === cat.id).length,
+    value: metrics?.byCategory.find(item=>item.id===cat.id)?.count??0,
     color: cat.color
   })).filter((c) => c.value > 0);
 
   // Priority Distribution Data
   const priorityData = priorities.map((prio) => ({
     name: prio.name,
-    value: filteredDemands.filter((d) => d.priorityId === prio.id).length,
+    value: metrics?.byPriority.find(item=>item.id===prio.id)?.count??0,
     color: prio.color
   })).filter((p) => p.value > 0);
 
   // Status Distribution Data
   const statusData = statuses.filter((s) => s.active).map((status) => ({
     name: status.name,
-    total: filteredDemands.filter((d) => d.statusId === status.id).length,
+    total: metrics?.byStatus.find(item=>item.id===status.id)?.count??0,
     color: status.color
   }));
-
-  // Weekly Trend Data (Simulated 4 weeks comparison: Recebidas vs Concluídas)
-  const weeklyEvolutionData = [
-    { semana: 'Sem 1 (Jul)', criadas: 8, concluidas: 6 },
-    { semana: 'Sem 2 (Jul)', criadas: 12, concluidas: 9 },
-    { semana: 'Sem 3 (Ago)', criadas: 15, concluidas: 14 },
-    { semana: 'Sem 4 (Ago Atual)', criadas: 11, concluidas: 10 }
-  ];
 
   // Workload by Team
   const teamWorkloadData = teams.map((team) => ({
     name: team.name.split('&')[0].trim(),
-    demandas: filteredDemands.filter((d) => d.teamId === team.id).length,
-    bloqueadas: filteredDemands.filter((d) => d.teamId === team.id && d.blocker?.isBlocked).length,
+    demandas: metrics?.byTeam.find(item=>item.id===team.id)?.count??0,
+    bloqueadas: metrics?.byTeam.find(item=>item.id===team.id)?.blocked??0,
     color: team.color
   }));
 
@@ -319,32 +304,6 @@ export const ExecutiveDashboard: React.FC = () => {
           </div>
         </motion.div>
 
-        {/* Weekly Trend: Inbound vs Completed */}
-        <motion.div variants={reduceMotion ? undefined : staggerItem} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-blue-500" />
-              <span>Evolução: Abertas vs Concluídas</span>
-            </h3>
-            <span className="text-[11px] text-emerald-600 font-bold">+18% velocidade de entrega</span>
-          </div>
-
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weeklyEvolutionData}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                <XAxis dataKey="semana" textAnchor="middle" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }}
-                />
-                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                <Bar dataKey="criadas" name="Demandas Abertas" fill="#3B82F6" radius={[4, 4, 0, 0]} isAnimationActive={chartAnimation} animationBegin={220} animationDuration={900} animationEasing="ease-out" />
-                <Bar dataKey="concluidas" name="Demandas Concluídas" fill="#10B981" radius={[4, 4, 0, 0]} isAnimationActive={chartAnimation} animationBegin={320} animationDuration={900} animationEasing="ease-out" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </motion.div>
       </motion.div>
 
       {/* Row 2: Status & Team Workload */}

@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { AppSelect } from '../common/AppSelect';
 import { useApp } from '../../context/AppContext';
+import { useDemands as useDemandStore } from '../../context/DemandsContext';
 import { Demand, StatusConfig } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
 import { UserAvatar } from '../common/UserAvatar';
@@ -26,6 +27,7 @@ import {
 } from 'lucide-react';
 
 export const ListView: React.FC = () => {
+  const { pagination, query, loadDemands, loading } = useDemandStore();
   const reduceMotion = useReducedMotion();
   const {
     filteredDemands,
@@ -82,6 +84,7 @@ export const ListView: React.FC = () => {
           </button>
         </div>
       </div>
+      <nav aria-label="Paginação de demandas" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900"><span>{pagination.total} atividades no total · página {pagination.page} de {Math.max(1,pagination.totalPages)}</span><div className="flex gap-2"><button disabled={loading||pagination.page<=1} onClick={()=>void loadDemands({...query,page:pagination.page-1})} className="rounded-lg border px-3 py-1.5 font-bold disabled:opacity-40">Anterior</button><button disabled={loading||pagination.totalPages===0||pagination.page>=pagination.totalPages} onClick={()=>void loadDemands({...query,page:pagination.page+1})} className="rounded-lg border px-3 py-1.5 font-bold disabled:opacity-40">Próxima</button></div></nav>
 
       {/* Main Table */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">

@@ -1,0 +1,10 @@
+import { describe,expect,it } from 'vitest';
+import { apiErrorResponseSchema,auditListResponseSchema,configurationUpdateSchemas,privacyRequestDtoSchema,publicUserDtoSchema,reportPresetDtoSchema,sessionListResponseSchema,userUpdateSchema } from '.';
+const now='2026-09-01T00:00:00.000Z';
+describe('contratos restantes do módulo 1',()=>{
+ it('impede campos sensíveis em usuários',()=>{const user={id:'u1',email:'u@test.local',name:'Usuário',role:'admin',roleTitle:'Admin',department:'TI',avatar:'',active:true,teamIds:[]};expect(publicUserDtoSchema.safeParse(user).success).toBe(true);expect(publicUserDtoSchema.safeParse({...user,password_hash:'hash'}).success).toBe(false);expect(userUpdateSchema.safeParse({mfa_secret_encrypted:'secret'}).success).toBe(false);});
+ it('rejeita sessão e auditoria incompletas',()=>{expect(sessionListResponseSchema.safeParse([{id:'s1'}]).success).toBe(false);expect(auditListResponseSchema.safeParse([{id:'a1',action:'UPDATE'}]).success).toBe(false);});
+ it('valida configurações por chave',()=>{expect(configurationUpdateSchemas.priorities.safeParse({value:[{id:'p1',name:'Alta',level:4,color:'#f00',bgColor:'#fee',textColor:'#900',recommendedSlaDays:2,iconName:'Flag',active:true}]}).success).toBe(true);expect(configurationUpdateSchemas.statuses.safeParse({value:[{id:'s1'}]}).success).toBe(false);});
+ it('rejeita preset e privacidade incompletos',()=>{expect(reportPresetDtoSchema.safeParse({id:'r1',name:'Preset',configuration:{},updatedAt:now}).success).toBe(false);expect(privacyRequestDtoSchema.safeParse({id:'p1',requestType:'access',status:'verified'}).success).toBe(false);});
+ it('exige envelope de erro v1 completo e estrito',()=>{const valid={message:'Inválido',code:'VALIDATION_ERROR',requestId:'req-1'};expect(apiErrorResponseSchema.safeParse(valid).success).toBe(true);expect(apiErrorResponseSchema.safeParse({message:'Inválido'}).success).toBe(false);expect(apiErrorResponseSchema.safeParse({...valid,debug:'SQL interno'}).success).toBe(false);});
+});

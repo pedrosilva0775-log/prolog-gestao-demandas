@@ -51,6 +51,10 @@ import { ALL_RBAC_PERMISSIONS, INITIAL_ROLE_PERMISSIONS, INITIAL_CATEGORIES, INI
 import confetti from 'canvas-confetti';
 import { DomainProviders } from './domainContexts';
 import { userCan } from './permissionPolicy';
+import { useDemands } from './DemandsContext';
+import { useTeams } from './TeamsContext';
+import { useModule } from './ModuleContext';
+import type { DemandCreateInput, DemandUpdateInput } from '../contracts';
 
 export interface ToastMessage {
   id: string;
@@ -123,8 +127,8 @@ export interface AppContextType {
   editingDemand: Demand | null;
   setEditingDemand: (demand: Demand | null) => void;
   
-  createDemand: (demandData: Partial<Demand>) => Promise<Demand>;
-  updateDemand: (id: string, updates: Partial<Demand>, justification?: string) => Promise<void>;
+  createDemand: (demandData: DemandCreateInput) => Promise<Demand>;
+  updateDemand: (id: string, updates: Omit<DemandUpdateInput,'version'>, justification?: string) => Promise<void>;
   deleteDemand: (id: string, reason?: string) => Promise<void>;
   moveDemandStatus: (id: string, newStatusId: string) => Promise<void>;
   toggleBlocker: (id: string, blocker: BlockerInfo) => Promise<void>;
@@ -139,7 +143,7 @@ export interface AppContextType {
     id: string,
     action: 'accept' | 'reject' | 'request_info',
     data?: {
-      demandOverrides?: Partial<Demand>;
+      demandOverrides?: Partial<DemandCreateInput>;
       rejectionReason?: string;
       infoMessage?: string;
     }
@@ -196,7 +200,7 @@ export interface AppContextType {
   // Management CRUD
   createTeam: (team: Omit<Team, 'id'>) => Promise<Team>;
   updateTeam: (id: string, updates: Partial<Team>) => Promise<void>;
-  deleteTeam: (id: string) => void;
+  deleteTeam: (id: string) => Promise<void>;
 
   createUser: (user: Omit<User, 'id'>, id?: string) => void;
   updateUser: (id: string, updates: Partial<User>) => Promise<void>;
@@ -269,15 +273,17 @@ const DEFAULT_FILTERS: FilterState = {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { currentModule } = useModule();
+  const { demands, setDemands, selectedDemand, setSelectedDemand, loading: demandsLoading, error: demandsError, loadDemands, createDemand: persistNewDemand, updateDemand: persistDemandUpdate, deleteDemand: persistDemandDeletion, setBlocker: persistBlocker, addComment: persistComment, editComment: persistCommentEdit, completeDemand: persistCompletion } = useDemands();
   const [users, setUsers] = useState<User[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
+  const { teams, replaceTeams, createTeam: persistTeam, updateTeam: persistTeamUpdate, deleteTeam: persistTeamDelete } = useTeams();
   const [categories, setCategories] = useState<CategoryConfig[]>(INITIAL_CATEGORIES);
   const [statuses, setStatuses] = useState<StatusConfig[]>(INITIAL_STATUSES);
   const [priorities, setPriorities] = useState<PriorityConfig[]>(INITIAL_PRIORITIES);
-  const [demands, setDemands] = useState<Demand[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState('');
+  const [effectivePermissions, setEffectivePermissions] = useState<string[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [googleServices, setGoogleServices] = useState<GoogleIntegrationService[]>([]);
   const [automations, setAutomations] = useState<AutomationRule[]>([]);
@@ -336,12 +342,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
-  const [selectedDemand, setSelectedDemand] = useState<Demand | null>(null);
+  const [filters, setFilters] = useState<FilterState>(()=>{const params=new URLSearchParams(window.location.search);const ids=(key:string)=>params.get(key)?.split(',').filter(Boolean)??[];const sort=params.get('sort');const direction=params.get('direction');return{...DEFAULT_FILTERS,search:params.get('q')??'',statusIds:ids('statusIds'),priorityIds:ids('priorityIds'),categoryIds:ids('categoryIds'),assigneeIds:ids('assigneeIds'),teamIds:ids('teamIds'),clientIds:ids('clientIds'),sortBy:sort==='title'||sort==='createdAt'||sort==='dueDate'?sort:DEFAULT_FILTERS.sortBy,sortOrder:direction==='desc'?'desc':'asc'};});
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [editingDemand, setEditingDemand] = useState<Demand | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  useEffect(()=>{
+    const timer=globalThis.setTimeout(()=>{void loadDemands({q:filters.search||undefined,statusIds:filters.statusIds,priorityIds:filters.priorityIds,categoryIds:filters.categoryIds,assigneeIds:filters.assigneeIds,teamIds:filters.teamIds,clientIds:filters.clientIds.filter(id=>id!=='__internal__'),sort:filters.sortBy==='title'?'title':filters.sortBy==='createdAt'?'createdAt':'dueDate',direction:filters.sortOrder,page:1,pageSize:100});},300);
+    return()=>globalThis.clearTimeout(timer);
+  },[filters.search,filters.statusIds,filters.priorityIds,filters.categoryIds,filters.assigneeIds,filters.teamIds,filters.clientIds,filters.sortBy,filters.sortOrder,loadDemands]);
 
   // Keyboard shortcut listener (Cmd+K or Ctrl+K for Global Search)
   useEffect(() => {
@@ -355,7 +365,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  useEffect(() => { Promise.all([apiClient.bootstrap(),apiClient.sessions()]).then(([data,sessions]) => { setUsers(data.users); setTeams(data.teams); setDemands(data.demands); setAuditLogs(data.auditLogs || []); setSecuritySessions(sessions); setCurrentUserIdState(data.currentUserId); if(data.configurations?.categories?.length)setCategories(data.configurations.categories); if(data.configurations?.statuses?.length)setStatuses(data.configurations.statuses); if(data.configurations?.priorities?.length)setPriorities(data.configurations.priorities); setDataError(''); }).catch(error => setDataError(error instanceof ApiError ? error.message : 'Não foi possível carregar os dados corporativos.')).finally(()=>setDataLoading(false)); }, []);
+  useEffect(() => { setDataLoading(true);setEffectivePermissions([]);Promise.all([apiClient.bootstrap(),apiClient.sessions()]).then(([data,sessions]) => { setUsers(data.users); replaceTeams(data.teams); setAuditLogs(data.auditLogs || []); setEffectivePermissions(data.effectivePermissions); setSecuritySessions(sessions); setCurrentUserIdState(data.currentUserId); if(data.configurations?.categories?.length)setCategories(data.configurations.categories); if(data.configurations?.statuses?.length)setStatuses(data.configurations.statuses); if(data.configurations?.priorities?.length)setPriorities(data.configurations.priorities); setDataError(''); }).catch(error => {setEffectivePermissions([]);setDataError(error instanceof ApiError ? error.message : 'Não foi possível carregar os dados corporativos.');}).finally(()=>setDataLoading(false)); }, [currentModule.id,replaceTeams]);
 
   // Handle Theme
   useEffect(() => {
@@ -507,12 +517,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ----------------------------------------------------
   // DEMAND CRUD & WORKFLOW ACTIONS
   // ----------------------------------------------------
-  const createDemand = async (demandData: Partial<Demand>): Promise<Demand> => {
+  const createDemand = async (demandData: DemandCreateInput): Promise<Demand> => {
     // O servidor atribui o código definitivo sob bloqueio transacional.
     const code = 'AUTO';
 
     const newDemand: Demand = {
       id: `dem-${Date.now()}`,
+      moduleId: currentModule.id,
+      version: 1,
       code,
       title: demandData.title || 'Sem título',
       description: demandData.description || '',
@@ -521,7 +533,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       expectedOutcome: demandData.expectedOutcome || '',
       whereLocation: demandData.whereLocation || '',
       howExecutionGuide: demandData.howExecutionGuide || '',
-      requesterId: demandData.requesterId || currentUser.id,
+      requesterId: currentUser.id,
       assigneeId: demandData.assigneeId || currentUser.id,
       participantIds: demandData.participantIds || [],
       teamId: demandData.teamId || teams[0].id,
@@ -538,7 +550,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       checklist: demandData.checklist?.length ? demandData.checklist : createDefaultChecklist(),
       dependencies: demandData.dependencies || [],
       advancedDependencies: demandData.advancedDependencies || [],
-      blocker: demandData.blocker || { isBlocked: false },
+      blocker: { isBlocked: false },
       financials: demandData.financials || {
         estimatedCost: 0,
         approvedCost: 0,
@@ -552,7 +564,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         regulatoryImpact: 'Neutro',
         strategicImpact: 'Operacional'
       },
-      sla: demandData.sla || {
+      sla: demandData.sla ? {
+        policyId: demandData.sla.policyId || 'sla-padrao',
+        firstResponseDue: demandData.sla.firstResponseDue || new Date(Date.now() + 4 * 3600000).toISOString(),
+        resolutionDue: demandData.sla.resolutionDue || demandData.dueDate || new Date(Date.now() + 7 * 86400000).toISOString(),
+        isBreached: demandData.sla.isBreached ?? false,
+        isPaused: demandData.sla.isPaused ?? false,
+        totalPausedMinutes: demandData.sla.totalPausedMinutes ?? 0,
+        pauseHistory: (demandData.sla.pauseHistory || []).map(item=>({...item,pausedAt:item.pausedAt||new Date().toISOString()})),
+        escalationLevel: demandData.sla.escalationLevel || 'none',
+        ...(demandData.sla.firstResponseMetAt ? {firstResponseMetAt:demandData.sla.firstResponseMetAt}:{}),
+        ...(demandData.sla.resolutionMetAt ? {resolutionMetAt:demandData.sla.resolutionMetAt}:{}),
+        ...(demandData.sla.breachReason ? {breachReason:demandData.sla.breachReason}:{})
+      } : {
         policyId: 'sla-padrao',
         firstResponseDue: new Date(Date.now() + 4 * 3600000).toISOString(),
         resolutionDue: demandData.dueDate || new Date(Date.now() + 7 * 86400000).toISOString(),
@@ -564,7 +588,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       },
       watchers: [currentUser.id],
       deadlineExtensions: [],
-      attachments: demandData.attachments || [],
+      attachments: [],
       comments: [],
       updatedAt: new Date().toISOString(),
       updatedByUserId: currentUser.id
@@ -574,8 +598,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       queueOfflineChange('CREATE', 'demand', newDemand);
     }
 
-    const persistedDemand = await apiClient.createDemand(newDemand);
-    setDemands(prev => [persistedDemand as Demand, ...prev]);
+    const persistedDemand = await persistNewDemand(demandData);
 
     // Audit Log
     addAuditLog({
@@ -590,23 +613,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       addNotification({
         userId: newDemand.assigneeId,
         title: 'Nova Demanda Atribuída',
-        message: `${currentUser.name} atribuiu a demanda [${newDemand.code}] "${newDemand.title}" a você.`,
+        message: `${currentUser.name} atribuiu a demanda [${persistedDemand.code}] "${persistedDemand.title}" a você.`,
         type: 'assigned',
-        demandId: newDemand.id,
-        demandCode: newDemand.code
+        demandId: persistedDemand.id,
+        demandCode: persistedDemand.code
       });
     }
 
     showToast({
       type: 'success',
       title: 'Demanda Criada com Sucesso',
-      message: `[${newDemand.code}] "${newDemand.title}" cadastrada no sistema.`
+      message: `[${persistedDemand.code}] "${persistedDemand.title}" cadastrada no sistema.`
     });
 
-    return persistedDemand as Demand;
+    return persistedDemand;
   };
 
-  const updateDemand = async (id: string, updates: Partial<Demand>, justification?: string) => {
+  const updateDemand = async (id: string, updates: Omit<DemandUpdateInput,'version'>, justification?: string) => {
     const existing = demands.find(d => d.id === id);
     if (!existing) return;
 
@@ -614,18 +637,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       queueOfflineChange('UPDATE', 'demand', { id, ...updates });
     }
 
-    const persistedDemand = await apiClient.updateDemand(id, {
-      ...updates,
-      updatedByUserId: currentUser.id
-    }) as Demand;
-    const updatedDemand: Demand = {
-      ...existing,
-      ...persistedDemand
-    };
-    setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
-    if (selectedDemand?.id === id) {
-      setSelectedDemand(updatedDemand);
-    }
+    const persistedDemand = await persistDemandUpdate(id, {
+      ...updates
+    });
+    if (!persistedDemand) return;
 
     // Audit Log
     addAuditLog({
@@ -641,11 +656,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const existing = demands.find(d => d.id === id);
     if (!existing) return;
 
-    await apiClient.deleteDemand(id);
-    setDemands(prev => prev.filter(d => d.id !== id));
-    if (selectedDemand?.id === id) {
-      setSelectedDemand(null);
-    }
+    await persistDemandDeletion(id);
 
     addAuditLog({
       demandId: id,
@@ -704,15 +715,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     const isCompleted = newStatus?.category === 'completed';
-    const progress = isCompleted ? 100 : existing.progressPercent;
+    if (isCompleted) {
+      showToast({type:'warning',title:'Conclusão exige confirmação',message:'Use a ação Concluir para validar checklist, dependências e registrar o resumo.'});
+      return;
+    }
+    const progress = existing.progressPercent;
 
     const updatedDemand: Demand = {
       ...existing,
       statusId: newStatusId,
       progressPercent: progress,
       sla: updatedSla,
-      completedAt: isCompleted ? new Date().toISOString() : existing.completedAt,
-      completedByUserId: isCompleted ? currentUser.id : existing.completedByUserId,
       updatedAt: new Date().toISOString(),
       updatedByUserId: currentUser.id
     };
@@ -722,14 +735,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (selectedDemand?.id === id) setSelectedDemand(updatedDemand);
 
     try {
-      await apiClient.updateDemand(id, {
+      const persistedDemand = await persistDemandUpdate(id, {
         statusId: newStatusId,
-        progressPercent: progress,
-        sla: updatedSla,
-        completedAt: updatedDemand.completedAt,
-        completedByUserId: updatedDemand.completedByUserId,
-        updatedByUserId: currentUser.id
+        sla: updatedSla
       });
+      if (!persistedDemand) return;
+      setDemands(previous => previous.map(demand => demand.id === id && demand.statusId === newStatusId ? persistedDemand : demand));
+      if (selectedDemand?.id === id) setSelectedDemand(persistedDemand);
     } catch (error) {
       setDemands(previous => previous.map(demand => demand.id === id && demand.statusId === newStatusId ? existing : demand));
       if (selectedDemand?.id === id) setSelectedDemand(existing);
@@ -767,10 +779,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const blockedStatus = statuses.find(s => s.category === 'blocked');
     const initialStatus = statuses.find(s => s.category === 'open');
     const taskCategory = categories.find(category => category.name.toLocaleLowerCase('pt-BR').includes('tarefa'));
-    let response: { demand: Demand; createdDemand?: Demand | null };
     try {
-      response = await apiClient.setBlocker(id, {
-        ...blocker,
+      await persistBlocker(id, {
+        isBlocked: blocker.isBlocked,
+        kind: blocker.kind,
+        reason: blocker.reason,
+        impact: blocker.impact,
+        actionNeeded: blocker.actionNeeded,
+        createRelatedTask: blocker.createRelatedTask,
+        responsibleTeamId: blocker.responsibleTeamId,
         blockedStatusId: blockedStatus?.id,
         initialStatusId: initialStatus?.id || statuses[0]?.id,
         taskCategoryId: taskCategory?.id || existing.categoryId
@@ -778,12 +795,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch (error) {
       throw error instanceof Error ? error : new Error('Não foi possível salvar a alteração no servidor.');
     }
-
-    setDemands(prev => {
-      const updated = prev.map(d => (d.id === id ? response.demand : d));
-      return response.createdDemand && !updated.some(d => d.id === response.createdDemand!.id) ? [response.createdDemand, ...updated] : updated;
-    });
-    if (selectedDemand?.id === id) setSelectedDemand(response.demand);
 
     addAuditLog({
       demandId: id,
@@ -803,8 +814,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       previousDueDate: existing.dueDate,
       newDueDate,
       reason,
-      requestedByUserId: currentUser.id,
-      requestedAt: new Date().toISOString(),
+      approvedByUserId: currentUser.id,
+      createdAt: new Date().toISOString(),
       approved: true
     };
 
@@ -816,11 +827,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedByUserId: currentUser.id
     };
 
-    await apiClient.updateDemand(id, { dueDate: newDueDate, deadlineExtensions: updatedDemand.deadlineExtensions, updatedByUserId: currentUser.id });
-    setDemands(prev => prev.map(d => (d.id === id ? updatedDemand : d)));
-    if (selectedDemand?.id === id) {
-      setSelectedDemand(updatedDemand);
-    }
+    await persistDemandUpdate(id, { dueDate: newDueDate });
 
     addAuditLog({
       demandId: id,
@@ -850,20 +857,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const existing = demands.find(d => d.id === demandId);
     if (!existing) return;
 
-    const newComment = await apiClient.addComment(demandId, { content, attachments: attachments || [] }) as Comment;
-
-    const updatedComments = [...(existing.comments || []), newComment];
-    const updatedDemand = {
-      ...existing,
-      comments: updatedComments,
-      updatedAt: new Date().toISOString(),
-      updatedByUserId: currentUser.id
-    };
-
-    setDemands(prev => prev.map(d => (d.id === demandId ? updatedDemand : d)));
-    if (selectedDemand?.id === demandId) {
-      setSelectedDemand(updatedDemand);
-    }
+    await persistComment(demandId, content, attachments || []);
 
     addAuditLog({
       demandId,
@@ -882,12 +876,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       showToast({ type: 'error', title: 'Acesso negado', message: 'Você não pode editar este comentário.' });
       return;
     }
-    const edited = await apiClient.editComment(demandId, commentId, { content: content.trim() }) as Comment;
-    const editedAt = edited.editedAt || new Date().toISOString();
-    const comments = existing.comments.map(item => item.id === commentId ? edited : item);
-    const updatedDemand = { ...existing, comments, updatedAt: editedAt, updatedByUserId: currentUser.id };
-    setDemands(previous => previous.map(item => item.id === demandId ? updatedDemand : item));
-    if (selectedDemand?.id === demandId) setSelectedDemand(updatedDemand);
+    await persistCommentEdit(demandId, commentId, content.trim());
     addAuditLog({ demandId, demandCode: existing.code, action: 'Comentário Editado', details: `Comentário ${commentId} editado por ${currentUser.name}.` });
   };
 
@@ -896,38 +885,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!existing) return;
 
     const updatedChecklist = existing.checklist.map(item => {
+      const { completedAt: _completedAt, ...writableItem } = item;
       if (item.id === itemId) {
         const completed = !item.completed;
         return {
-          ...item,
-          completed,
-          completedAt: completed ? new Date().toISOString() : undefined
+          ...writableItem,
+          completed
         };
       }
-      return item;
+      return writableItem;
     });
 
     const total = updatedChecklist.length;
     const completedCount = updatedChecklist.filter(i => i.completed).length;
     const progressPercent = total > 0 ? Math.round((completedCount / total) * 100) : existing.progressPercent;
 
-    const updatedDemand = {
-      ...existing,
-      checklist: updatedChecklist,
-      progressPercent,
-      updatedAt: new Date().toISOString(),
-      updatedByUserId: currentUser.id
-    };
-
     try {
-      await apiClient.updateDemand(demandId, { checklist: updatedChecklist, progressPercent, updatedByUserId: currentUser.id });
+      const updated = await persistDemandUpdate(demandId, { checklist: updatedChecklist, progressPercent });
+      if (!updated) return;
     } catch (error) {
       showToast({ type: 'error', title: 'Checklist não atualizado', message: error instanceof Error ? error.message : 'Falha ao salvar o checklist.' });
       return;
-    }
-    setDemands(prev => prev.map(d => (d.id === demandId ? updatedDemand : d)));
-    if (selectedDemand?.id === demandId) {
-      setSelectedDemand(updatedDemand);
     }
   };
 
@@ -947,13 +925,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedByUserId: currentUser.id
     };
 
-    const response = await apiClient.completeDemand(demandId, { statusId: updatedDemand.statusId, summary });
-    const persistedDemand = response.demand as Demand;
-    const autoUnblocked = (response.autoUnblocked || []) as Demand[];
-    setDemands(prev => prev.map(d => autoUnblocked.find(parent => parent.id === d.id) || (d.id === demandId ? persistedDemand : d)));
-    if (selectedDemand?.id === demandId) {
-      setSelectedDemand(persistedDemand);
-    }
+    const response = await persistCompletion(demandId, updatedDemand.statusId, summary);
+    if (!response) return;
+    const autoUnblocked = response.autoUnblocked;
 
     confetti({
       particleCount: 100,
@@ -1000,7 +974,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     id: string,
     action: 'accept' | 'reject' | 'request_info',
     data?: {
-      demandOverrides?: Partial<Demand>;
+      demandOverrides?: Partial<DemandCreateInput>;
       rejectionReason?: string;
       infoMessage?: string;
     }
@@ -1016,8 +990,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         priorityId: item.suggestedPriorityId || priorities[2].id,
         teamId: item.assignedTeamId || teams[0].id,
         assigneeId: item.assignedUserId || currentUser.id,
-        inboxSourceId: item.id,
-        inboxSourceType: item.source,
+        statusId: statuses[0].id,
         financials: {
           estimatedHours: item.estimatedEffortHours || 0,
           estimatedCost: 0,
@@ -1151,6 +1124,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             priorityId: rule.priorityId,
             assigneeId: rule.assigneeId,
             teamId: rule.teamId,
+            statusId: statuses[0].id,
             whyReason: 'Atividade periódica gerada automaticamente pelo motor de recorrência.',
             tags: ['Recorrente', 'Rotina']
           });
@@ -1520,9 +1494,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // MANAGEMENT CRUD
   // ----------------------------------------------------
   const createTeam = async (teamData: Omit<Team, 'id'>) => {
-    const saved = await apiClient.createTeam(teamData) as Team;
-    const newTeam: Team = { ...teamData, ...saved };
-    setTeams(prev => [...prev, newTeam]);
+    const newTeam = await persistTeam(teamData);
     showToast({
       type: 'success',
       title: 'Equipe Criada',
@@ -1532,13 +1504,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateTeam = async (id: string, updates: Partial<Team>) => {
-    const saved = await apiClient.updateTeam(id, updates) as Partial<Team>;
-    setTeams(prev => prev.map(t => (t.id === id ? { ...t, ...updates, ...saved, id } : t)));
+    await persistTeamUpdate(id, updates);
   };
 
-  const deleteTeam = (id: string) => {
-    setTeams(prev => prev.filter(t => t.id !== id));
-    apiClient.deleteTeam(id).catch(error=>showToast({type:'error',title:'Equipe não removida',message:error instanceof Error?error.message:'Falha na API.'}));
+  const deleteTeam = async (id: string) => {
+    await persistTeamDelete(id);
   };
 
   const createUser = (userData: Omit<User, 'id'>, id?: string) => {
@@ -1555,7 +1525,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateUser = async (id: string, updates: Partial<User>) => {
-    const saved = await apiClient.updateUser(id,updates) as Partial<User>;
+    const saved = await apiClient.updateUser(id,updates);
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates, ...saved, id } : u)));
   };
 
@@ -1813,7 +1783,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     action: RbacAction,
     activityType?: 'PROJETO' | 'MELHORIA' | 'TAREFA' | 'GERAL'
   ): boolean => {
-    return userHasPermission(currentUser, module, action, activityType);
+    const targetModule=(activityType&&['PROJETO','MELHORIA','TAREFA'].includes(activityType))||['projects','improvements','tasks','dashboard'].includes(module)?'demands':module;
+    const targetAction=action==='edit'?'update':action;
+    const permission=targetModule==='categories'?(targetAction==='read'?'configurations:read':'configurations:update'):targetModule==='users_teams'?`teams:${targetAction}`:`${targetModule}:${targetAction}`;
+    return effectivePermissions.includes(permission);
   };
 
   const resetAllData = () => {
@@ -1956,7 +1929,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return (
     <DomainProviders value={value}>
       <AppContext.Provider value={value}>
-        {dataLoading ? <div className="min-h-dvh grid place-items-center bg-slate-50 text-sm font-bold text-slate-500">Carregando dados corporativos...</div> : dataError ? <div className="min-h-dvh grid place-items-center bg-slate-50 p-6"><div className="max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center"><h1 className="font-black text-red-700">Falha ao carregar o PROLOG</h1><p className="mt-2 text-sm text-slate-600">{dataError}</p><button onClick={()=>window.location.reload()} className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">Tentar novamente</button></div></div> : children}
+        {dataLoading || demandsLoading ? <div className="min-h-dvh grid place-items-center bg-slate-50 text-sm font-bold text-slate-500">Carregando dados corporativos...</div> : dataError || demandsError ? <div className="min-h-dvh grid place-items-center bg-slate-50 p-6"><div className="max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center"><h1 className="font-black text-red-700">Falha ao carregar o PROLOG</h1><p className="mt-2 text-sm text-slate-600">{dataError || demandsError}</p><button onClick={()=>window.location.reload()} className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">Tentar novamente</button></div></div> : children}
       </AppContext.Provider>
     </DomainProviders>
   );

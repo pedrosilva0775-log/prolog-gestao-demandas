@@ -5,6 +5,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
+import { useModule } from '../../context/ModuleContext';
 import { isCalendarDateOverdue } from '../../utils/date';
 import { Demand } from '../../types';
 import { IconRenderer } from '../common/IconRenderer';
@@ -40,6 +41,7 @@ export const Header: React.FC<{
   onOpenNotifications: () => void;
   onOpenCreateModal: () => void;
 }> = ({ onOpenNotifications, onOpenCreateModal }) => {
+  const {currentModule,chooseAnotherModule}=useModule();
   const reduceMotion = useReducedMotion();
   const {
     currentUser,
@@ -128,7 +130,6 @@ export const Header: React.FC<{
       const created = await createDemand({
         title,
         description: `Criada rapidamente via barra superior por ${currentUser.name}.`,
-        requesterId: currentUser.id,
         assigneeId: currentUser.id,
         statusId: statuses[0]?.id,
         priorityId: priorities[2]?.id || priorities[0]?.id,
@@ -256,6 +257,10 @@ export const Header: React.FC<{
         >
           <PanelLeft className="w-4 h-4 hidden lg:block" />
           <Menu className="w-4 h-4 lg:hidden" />
+        </button>
+
+        <button onClick={chooseAnotherModule} className="hidden sm:inline-flex max-w-44 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-700 hover:border-blue-300 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" title="Trocar módulo">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{backgroundColor:currentModule.color}}/><span className="truncate">{currentModule.name}</span><Layers className="h-3.5 w-3.5 shrink-0 opacity-60"/>
         </button>
 
         {/* Quick Add Demand Input */}

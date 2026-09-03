@@ -133,7 +133,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
   const normalizedMemberSearch = memberSearch.trim().toLocaleLowerCase('pt-BR');
   const selectableUsers = users.filter(user => user.active && (!normalizedMemberSearch || [user.name, user.email, user.roleTitle, user.department].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(normalizedMemberSearch))));
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!teamToEdit) return;
 
     const teamDemands = demands.filter(d => d.teamId === teamToEdit.id);
@@ -147,8 +147,15 @@ export const TeamModal: React.FC<TeamModalProps> = ({
       }
     }
 
-    deleteTeam(teamToEdit.id);
-    onClose();
+    setSaving(true);
+    try {
+      await deleteTeam(teamToEdit.id);
+      onClose();
+    } catch (error) {
+      showToast({ type: 'error', title: 'Equipe não removida', message: error instanceof Error ? error.message : 'Falha ao remover a equipe.' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
