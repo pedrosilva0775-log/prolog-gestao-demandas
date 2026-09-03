@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { auditListResponseSchema, blockerResponseSchema, completeDemandResponseSchema, publicUserDtoSchema, reportPresetListSchema, sessionListResponseSchema, teamDtoSchema } from '../contracts';
-import { ApiError, apiRequest } from './apiClient';
+import { ApiError, apiClient, apiRequest, setActiveApiModule } from './apiClient';
 
 const demandDto={id:'d1',moduleId:'mod-default',code:'DEM-1',title:'Demanda',description:'',categoryId:'tarefa',requesterId:'u1',assigneeId:'',teamId:'',clientId:null,statusId:'nova',priorityId:'normal',version:1,createdAt:'2026-01-01T00:00:00.000Z',updatedAt:'2026-01-01T00:00:00.000Z'};
 const teamDto={id:'t1',name:'Equipe',description:'',department:'TI',leaderId:'',color:'#2563eb',active:true,memberIds:[],version:1,createdAt:'2026-01-01T00:00:00.000Z',updatedAt:'2026-01-01T00:00:00.000Z'};
@@ -15,6 +15,14 @@ beforeEach(() => {
 });
 
 describe('apiRequest', () => {
+  it('carrega todas as páginas do conjunto destinado aos relatórios e exportações', async () => {
+    setActiveApiModule('mod-default');
+    const fetchMock=vi.fn(async(input:string|URL|Request)=>{const url=new URL(String(input),'http://localhost');const page=Number(url.searchParams.get('page'));const items=page===1?Array.from({length:500},(_,index)=>({...demandDto,id:`d-${index}`,code:`DEM-${index}`})):[{...demandDto,id:'d-500',code:'DEM-500'}];return new Response(JSON.stringify({items,pagination:{page,pageSize:500,total:501,totalPages:2}}),{status:200,headers:{'Content-Type':'application/json'}});});
+    vi.stubGlobal('fetch',fetchMock);
+    await expect(apiClient.reportDemands()).resolves.toHaveLength(501);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain('page=2');
+  });
   it('preserva detalhes de erro JSON validado', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'Inválido', code: 'VALIDATION_ERROR', fieldErrors: { title: ['Obrigatório'] }, requestId: 'req-1' }), { status: 422, headers: { 'Content-Type': 'application/json' } })));
     const error = await apiRequest('/teste', z.object({ ok: z.boolean() })).catch(cause => cause);

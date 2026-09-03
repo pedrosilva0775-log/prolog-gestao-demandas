@@ -313,6 +313,25 @@ export const createApiRouter = (
         );
       }
     };
+  const authorizeAny =
+    (permissions: string[]) =>
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const input = await authorizationInput(res);
+        if (!permissions.some(permission => isAuthorized({ ...input, permission })))
+          return sendApiError(res, 403, "FORBIDDEN", "PermissÃ£o insuficiente.");
+        next();
+      } catch (error) {
+        handleApiError(
+          Object.assign(new Error("NÃ£o foi possÃ­vel validar a autorizaÃ§Ã£o."), {
+            status: 503,
+            cause: error,
+          }),
+          req,
+          res,
+        );
+      }
+    };
   const moduleId = (res: Response) =>
     String(res.locals.moduleId || "mod-default");
   const audit = async (
@@ -1083,7 +1102,7 @@ export const createApiRouter = (
   );
   router.get(
     "/report-demands",
-    authorize("reports:read"),
+    authorizeAny(["reports:read", "demands:export"]),
     safe(async (req, res) => {
       const input = reportDemandQuerySchema.parse(req.query);
       const db = getDatabase();

@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AppSelect } from '../common/AppSelect';
 import { Team, User } from '../../types';
 import { useApp } from '../../context/AppContext';
@@ -158,9 +159,10 @@ export const TeamModal: React.FC<TeamModalProps> = ({
     }
   };
 
-  return (
-    <div data-modal-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+  return createPortal(
+    <div data-modal-overlay="true" className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
+      <div className="min-h-full flex justify-center p-4 pt-5 sm:pt-8">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -363,7 +365,9 @@ export const TeamModal: React.FC<TeamModalProps> = ({
             </div>
           </div>
         </form>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
